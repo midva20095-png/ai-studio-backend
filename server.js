@@ -39,11 +39,11 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Используем стабильную модель gemini-1.5-flash для бесплатного тарифа
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+            // Используем актуальный и стабильный эндпоинт gemini-2.0-flash
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
                 method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
                 })
             });
@@ -51,8 +51,8 @@ wss.on('connection', (ws, req) => {
             const data = await response.json();
             
             if (data.error) {
-                console.error("API Error:", data.error);
-                ws.send("❌ Ошибка ответа от сервиса нейросети.");
+                console.error("API Error details:", data.error);
+                ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
                 return;
             }
 
@@ -61,13 +61,13 @@ wss.on('connection', (ws, req) => {
             
         } catch (error) {
             console.error("Fetch Error:", error);
-            ws.send("❌ Произошла ошибка при обращении к нейросети.");
+            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend with Gemini is running!');
+    res.send('AI Studio Backend with Gemini 2.0 is running!');
 });
 
 const PORT = process.env.PORT || 3000;
