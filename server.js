@@ -10,8 +10,8 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш API ключ Gemini
-const GEMINI_API_KEY = "AQ.Ab8RN6Kx6a5SY__g2nQyY97j-59yUu4-OJ6FXepO-rvPvByMmw";
+// Ваш новый ключ и модель gemini-flash-latest
+const GEMINI_API_KEY = "AQ.Ab8RN6IEFV-SuUH53CPd-pp_PvmpZo-lPK-KVwQmGflAbvWJ9Q";
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
@@ -39,12 +39,11 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Передаем ключ через заголовок x-goog-api-key в соответствии с требованиями Google API
-            const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
+            const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-goog-api-key': GEMINI_API_KEY
+                    'X-goog-api-key': GEMINI_API_KEY
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -70,7 +69,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend with Gemini 2.0 is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
