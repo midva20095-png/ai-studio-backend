@@ -10,15 +10,8 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш API ключ
+// Ваш новый ключ (начинающийся с AQ.)
 const GEMINI_API_KEY = "AQ.Ab8RN6IEFV-SuUH53CPd-pp_PvmpZo-lPK-KVwQmGflAbvWJ9Q";
-
-// Доступные модели, которые можно менять прямо из чата
-const AVAILABLE_MODELS = {
-    "flash": "gemini-1.5-flash",
-    "flash2": "gemini-2.0-flash",
-    "flash-latest": "gemini-flash-latest"
-};
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
@@ -28,30 +21,25 @@ wss.on('connection', (ws, req) => {
         users[clientId] = { 
             ws: ws, 
             coins: 10, 
-            model: "gemini-1.5-flash" // Модель по умолчанию
+            model: "gemini-3.8-flash" // Актуальная модель для новых ключей
         };
     } else {
         users[clientId].ws = ws;
     }
 
     ws.send(`COINS_UPDATE:${users[clientId].coins}`);
-    ws.send(`🤖 Текущая модель ИИ: ${users[clientId].model}\n💡 Команды для смены модели:\n- /model flash (gemini-1.5-flash)\n- /model flash2 (gemini-2.0-flash)\n- /model flash-latest (gemini-flash-latest)`);
 
     ws.on('message', async (message) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка команд смены модели
-        if (text.startsWith('/model')) {
-            const parts = text.split(' ');
-            const arg = parts[1]?.toLowerCase();
-            
-            if (AVAILABLE_MODELS[arg]) {
-                user.model = AVAILABLE_MODELS[arg];
-                ws.send(`✅ Модель успешно изменена на: ${user.model}`);
-            } else {
-                ws.send(`⚠️ Неверная модель. Доступные:\n- /model flash\n- /model flash2\n- /model flash-latest`);
-            }
+        // Обработка смены модели через кнопки в виджете
+        if (text.startsWith("SET_MODEL:")) {
+            const modelKey = text.split(":")[1];
+            if (modelKey === "flash") user.model = "gemini-3.8-flash";
+            if (modelKey === "flash2") user.model = "gemini-2.0-flash";
+            if (modelKey === "flash-latest") user.model = "gemini-flash-latest";
+            ws.send(`MODEL_UPDATED:${user.model}`);
             return;
         }
 
@@ -65,17 +53,16 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Передаем ключ и в URL, и в заголовок, чтобы новые ключи (AQ...) точно прошли проверку
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
-            
-            const response = await fetch(url, {
+            // Используем официальный защищенный эндпоинт для новых AQ-ключей
+            const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
+                    'x-goog-api-key': GEMINI_API_KEY
                 },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
+                    model: user.model,
+                    input: text
                 })
             });
 
@@ -83,11 +70,12 @@ wss.on('connection', (ws, req) => {
             
             if (data.error) {
                 console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
                 return;
             }
 
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            // Извлекаем ответ из нового формата ответа Google
+            const aiReply = data.interaction?.outputText || data.output_text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
@@ -98,10 +86,10 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Multi-Model Backend is running!');
+    res.send('AI Studio Auth-Key Backend is running!');
 });
 
-const PORT = process.env.PORT || 3000;
+The PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });
