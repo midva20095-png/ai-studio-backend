@@ -10,8 +10,15 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш бесплатный ключ с префиксом AQ.
+// Ваш рабочий ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6IEFV-SuUH53CPd-pp_PvmpZo-lPK-KVwQmGflAbvWJ9Q";
+
+// Доступные модели для переключения с кнопок в виджете
+const AVAILABLE_MODELS = {
+    "flash": "gemini-1.5-flash",
+    "flash2": "gemini-2.0-flash",
+    "flash-latest": "gemini-flash-latest"
+};
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
@@ -21,7 +28,7 @@ wss.on('connection', (ws, req) => {
         users[clientId] = { 
             ws: ws, 
             coins: 10, 
-            model: "gemini-2.0-flash" // Используем актуальную модель
+            model: "gemini-flash-latest" // Модель по умолчанию, которая у вас уже сработала
         };
     } else {
         users[clientId].ws = ws;
@@ -33,13 +40,13 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка смены модели через кнопки в виджете
+        // Обработка кликов по кнопкам смены модели в виджете
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
-            if (modelKey === "flash") user.model = "gemini-1.5-flash";
-            if (modelKey === "flash2") user.model = "gemini-2.0-flash";
-            if (modelKey === "flash-latest") user.model = "gemini-flash-latest";
-            ws.send(`MODEL_UPDATED:${user.model}`);
+            if (AVAILABLE_MODELS[modelKey]) {
+                user.model = AVAILABLE_MODELS[modelKey];
+                ws.send(`MODEL_UPDATED:${user.model}`);
+            }
             return;
         }
 
@@ -53,14 +60,14 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Отправляем запрос через эндпоинт, совместимый с новыми AQ-ключами
+            // Используем рабочий метод отправки запроса с вашим ключом
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
             
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${GEMINI_API_KEY}` // Новые AQ-ключи передаются как Bearer-токен
+                    'X-goog-api-key': GEMINI_API_KEY
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -71,7 +78,12 @@ wss.on('connection', (ws, req) => {
             
             if (data.error) {
                 console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                // Если модель перегружена, подскажем пользователю попробовать другую кнопку
+                if (data.error.code === 429 || data.error.status === 'RESOURCE_EXHAUSTED') {
+                    ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте переключиться на другую кнопку выше.`);
+                } else {
+                    ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                }
                 return;
             }
 
@@ -86,7 +98,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Bearer-Key Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
