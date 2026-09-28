@@ -10,10 +10,10 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш свежий ключ AQ.
-const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";
+// Ваш актуальный ключ
+const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";[cite: 2]
 
-// Доступные модели для переключения кнопками в виджете Tilda
+// Словарь доступных моделей для кнопок
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -25,11 +25,8 @@ wss.on('connection', (ws, req) => {
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { 
-            ws: ws, 
-            coins: 10, 
-            model: "gemini-1.5-flash" 
-        };
+        // По умолчанию используем стабильную flash-latest модель
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };[cite: 2]
     } else {
         users[clientId].ws = ws;
     }
@@ -40,7 +37,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка смены модели через кнопки в виджете
+        // Обработка кликов по кнопкам смены модели из виджета Tilda
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -60,13 +57,14 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Передаем ключ AQ. через ?key= в URL — стандарт для новых ключей Google AI Studio
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
-            
+            // Динамически подставляем выбранную пользователем модель в рабочий эндпоинт
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
+
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -77,11 +75,7 @@ wss.on('connection', (ws, req) => {
             
             if (data.error) {
                 console.error("API Error details:", data.error);
-                if (data.error.code === 429 || data.error.status === 'RESOURCE_EXHAUSTED') {
-                    ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте другую кнопку.`);
-                } else {
-                    ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                }
+                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
                 return;
             }
 
@@ -96,7 +90,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio AQ-Query Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
