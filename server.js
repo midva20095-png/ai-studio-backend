@@ -1,6 +1,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -10,8 +11,11 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш новый актуальный ключ AQ.
+// Ваш текущий ключ AQ.
 const GEMINI_API_KEY = "AQ.Ab8RN6J5GF3op0QCj5FIc5ih7gnuDCu3xLFMPWhl_fW7kf_Pcw";
+
+// Инициализируем клиент через официальный SDK
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Доступные модели для кнопок в виджете Tilda
 const AVAILABLE_MODELS = {
@@ -60,39 +64,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
-            
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${GEMINI_API_KEY}`
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
+            // Вызов через официальный SDK Google Gen AI
+            const response = await ai.models.generateContent({
+                model: user.model,
+                contents: text,
             });
 
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                return;
-            }
-
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("Fetch Error:", error);
-            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+            console.error("SDK Error details:", error);
+            ws.send(`❌ Ошибка ИИ (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio AQ-Key Backend is running!');
+    res.send('AI Studio SDK Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
