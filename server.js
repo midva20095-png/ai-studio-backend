@@ -10,6 +10,7 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
+// Ваш API ключ Gemini
 const GEMINI_API_KEY = "AQ.Ab8RN6Kx6a5SY__g2nQyY97j-59yUu4-OJ6FXepO-rvPvByMmw";
 
 wss.on('connection', (ws, req) => {
@@ -38,19 +39,28 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+            // Используем стабильную модель gemini-1.5-flash для бесплатного тарифа
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
                 })
             });
 
             const data = await response.json();
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            
+            if (data.error) {
+                console.error("API Error:", data.error);
+                ws.send("❌ Ошибка ответа от сервиса нейросети.");
+                return;
+            }
 
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
+            
         } catch (error) {
+            console.error("Fetch Error:", error);
             ws.send("❌ Произошла ошибка при обращении к нейросети.");
         }
     });
