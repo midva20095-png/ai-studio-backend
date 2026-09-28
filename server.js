@@ -10,6 +10,8 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
+const GEMINI_API_KEY = "AQ.Ab8RN6Kx6a5SY__g2nQyY97j-59yUu4-OJ6FXepO-rvPvByMmw";
+
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
     const clientId = urlParts[urlParts.length - 1];
@@ -35,14 +37,27 @@ wss.on('connection', (ws, req) => {
         ws.send(`COINS_UPDATE:${user.coins}`);
         ws.send("⏳ Думаю над ответом...");
 
-        setTimeout(() => {
-            ws.send(`🤖 Эхо-ответ ИИ: "${text}" (Монет осталось: ${user.coins})`);
-        }, 1000);
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }]
+                })
+            });
+
+            const data = await response.json();
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+
+            ws.send(aiReply);
+        } catch (error) {
+            ws.send("❌ Произошла ошибка при обращении к нейросети.");
+        }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Backend with Gemini is running!');
 });
 
 const PORT = process.env.PORT || 3000;
