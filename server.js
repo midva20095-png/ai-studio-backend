@@ -10,10 +10,10 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш рабочий ключ
+// Ваш ключ с префиксом AQ.
 const GEMINI_API_KEY = "AQ.Ab8RN6IEFV-SuUH53CPd-pp_PvmpZo-lPK-KVwQmGflAbvWJ9Q";
 
-// Доступные модели для переключения с кнопок в виджете
+// Доступные модели для переключения через кнопки
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -28,7 +28,7 @@ wss.on('connection', (ws, req) => {
         users[clientId] = { 
             ws: ws, 
             coins: 10, 
-            model: "gemini-flash-latest" // Модель по умолчанию, которая у вас уже сработала
+            model: "gemini-1.5-flash" 
         };
     } else {
         users[clientId].ws = ws;
@@ -40,7 +40,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка кликов по кнопкам смены модели в виджете
+        // Обработка смены модели через кнопки в виджете
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -60,14 +60,14 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Используем рабочий метод отправки запроса с вашим ключом
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
             
+            // Передаем ключ как Bearer-токен для корректной авторизации AQ-ключей
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
+                    'Authorization': `Bearer ${GEMINI_API_KEY}`
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -78,9 +78,8 @@ wss.on('connection', (ws, req) => {
             
             if (data.error) {
                 console.error("API Error details:", data.error);
-                // Если модель перегружена, подскажем пользователю попробовать другую кнопку
                 if (data.error.code === 429 || data.error.status === 'RESOURCE_EXHAUSTED') {
-                    ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте переключиться на другую кнопку выше.`);
+                    ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте другую кнопку.`);
                 } else {
                     ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
                 }
@@ -98,7 +97,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Bearer Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
