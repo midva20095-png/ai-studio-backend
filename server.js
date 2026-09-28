@@ -10,14 +10,14 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш ключ API
+// Ваш API ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6IEFV-SuUH53CPd-pp_PvmpZo-lPK-KVwQmGflAbvWJ9Q";
 
-// Список доступных бесплатных моделей Flash (и список для справки)
+// Доступные модели, которые можно менять прямо из чата
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
-    "flash3": "gemini-3-flash-preview"
+    "flash-latest": "gemini-flash-latest"
 };
 
 wss.on('connection', (ws, req) => {
@@ -35,13 +35,13 @@ wss.on('connection', (ws, req) => {
     }
 
     ws.send(`COINS_UPDATE:${users[clientId].coins}`);
-    ws.send(`🤖 Текущая модель ИИ: ${users[clientId].model}\n💡 Чтобы сменит модель, отправьте команду: /model flash или /model flash2`);
+    ws.send(`🤖 Текущая модель ИИ: ${users[clientId].model}\n💡 Команды для смены модели:\n- /model flash (gemini-1.5-flash)\n- /model flash2 (gemini-2.0-flash)\n- /model flash-latest (gemini-flash-latest)`);
 
     ws.on('message', async (message) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка команд смены модели прямо из чата
+        // Обработка команд смены модели
         if (text.startsWith('/model')) {
             const parts = text.split(' ');
             const arg = parts[1]?.toLowerCase();
@@ -50,7 +50,7 @@ wss.on('connection', (ws, req) => {
                 user.model = AVAILABLE_MODELS[arg];
                 ws.send(`✅ Модель успешно изменена на: ${user.model}`);
             } else {
-                ws.send(`⚠️ Неверная модель. Доступные варианты:\n- /model flash (gemini-1.5-flash)\n- /model flash2 (gemini-2.0-flash)\n- /model flash3 (gemini-3-flash-preview)`);
+                ws.send(`⚠️ Неверная модель. Доступные:\n- /model flash\n- /model flash2\n- /model flash-latest`);
             }
             return;
         }
@@ -65,8 +65,10 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Динамически подставляем выбранную пользователем модель в URL
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
+            // Передаем ключ и в URL, и в заголовок, чтобы новые ключи (AQ...) точно прошли проверку
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
+            
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
