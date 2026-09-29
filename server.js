@@ -1,324 +1,44 @@
-const express = require('express');
-const cors = require('cors');
-const { Telegraf, Markup } = require('telegraf');
-const axios = require('axios');
-const admin = require('firebase-admin');
-const fs = require('fs');
-const { GoogleGenAI } = require('@google/genai');
-
-// Инициализация Firebase через переменные окружения Render или локальный файл
-if (process.env.FIREBASE_CONFIG_JSON) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('Firebase успешно подключен через переменные окружения!');
-} else if (fs.existsSync('./firebase-key.json')) {
-    const serviceAccount = require('./firebase-key.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('Firebase успешно подключен из локального файла!');
-} else {
-    console.error('КРИТИЧЕСКАЯ ОШИБКА: Ключ Firebase не найден ни в файле, ни в переменных окружения!');
-}
-
-const db = admin.firestore();
-
-// Инициализация Google Gen AI с платным ключом
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.use(cors());
-app.use(express.json());
-
-const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const bot = new Telegraf(BOT_TOKEN);
-
-const YUKASSA_SHOP_ID = '1120841';
-const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
-
-// Актуальные эндпоинты моделей из официальной документации
-const MODELS = {
-    'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
-};
-
-// Хранение выбранной модели для каждого пользователя в памяти
-const userModels = {};
-
-// Работа с балансом через Firestore
+// Работа с балансом через Firestore с детальным логированием
 async function getBalance(userId) {
     try {
-        const userRef = db.collection('users').doc(String(userId));
+        const docId = String(userId);
+        console.log(`[Firestore] Чтение баланса для пользователя ID: ${docId}`);
+        const userRef = db.collection('users').doc(docId);
         const doc = await userRef.get();
+        
         if (!doc.exists) {
+            console.log(`[Firestore] Пользователь ${docId} не найден. Создаем с начальным балансом 5.`);
             await userRef.set({ balance: 5, created_at: new Date() });
             return 5;
         }
-        return Number(doc.data().balance) || 0;
+        
+        const balance = Number(doc.data().balance) || 0;
+        console.log(`[Firestore] Текущий баланс пользователя ${docId}: ${balance}`);
+        return balance;
     } catch (error) {
-        console.error('Ошибка чтения баланса:', error);
+        console.error('[Firestore ERROR] Ошибка чтения баланса:', error);
         return 0;
     }
 }
 
 async function updateBalance(userId, amount) {
     try {
-        const userRef = db.collection('users').doc(String(userId));
+        const docId = String(userId);
+        console.log(`[Firestore] Обновление баланса для пользователя ${docId}. Изменение на: ${amount}`);
+        const userRef = db.collection('users').doc(docId);
         const doc = await userRef.get();
+        
         let currentBalance = 0;
         if (doc.exists) {
             currentBalance = Number(doc.data().balance) || 0;
         }
+        
         const newBalance = currentBalance + amount;
         await userRef.set({ balance: newBalance, updated_at: new Date() }, { merge: true });
-        console.log(`Баланс пользователя ${userId} изменен на ${amount}. Новый баланс: ${newBalance}`);
+        console.log(`[Firestore] Успешно! Новый баланс пользователя ${docId} равен ${newBalance}`);
         return newBalance;
     } catch (error) {
-        console.error('Ошибка обновления баланса:', error);
+        console.error('[Firestore ERROR] Ошибка обновления баланса:', error);
         return 0;
     }
 }
-
-// Создание платежа ЮKassa с передачей payment_id в metadata
-async function createYooKassaPayment(userId, amountCoins, priceRub) {
-    const url = 'https://api.yookassa.ru/v3/payments';
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    
-    const body = {
-        amount: { value: `${priceRub}.00`, currency: 'RUB' },
-        confirmation: { type: 'redirect', return_url: 'https://t.me/' + (await bot.telegram.getMe()).username },
-        capture: true,
-        description: `Покупка ${amountCoins} монет в ИИ-боте`,
-        metadata: { user_id: String(userId), coins: String(amountCoins) }
-    };
-
-    try {
-        const response = await axios.post(url, body, {
-            headers: {
-                'Authorization': `Basic ${authString}`,
-                'Content-Type': 'application/json',
-                'Idempotence-Key': Math.random().toString(36).substring(7)
-            }
-        });
-        
-        return {
-            confirmationUrl: response.data.confirmation.confirmation_url,
-            paymentId: response.data.id
-        };
-    } catch (error) {
-        console.error('Ошибка ЮKassa:', error.response?.data || error.message);
-        return null;
-    }
-}
-
-// Ручная проверка статуса платежа через API ЮKassa
-async function checkPaymentStatus(paymentId) {
-    const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    try {
-        const response = await axios.get(url, {
-            headers: { 'Authorization': `Basic ${authString}` }
-        });
-        return response.data;
-    } catch (error) {
-        console.error('Ошибка проверки статуса платежа:', error.response?.data || error.message);
-        return null;
-    }
-}
-
-// Главная клавиатура выбора пополнения (от 1 руб до 5000 руб)
-function getTopUpKeyboard() {
-    return Markup.inlineKeyboard([
-        [Markup.button.callback('🧪 1 руб. (1 монета - тест)', 'buy_1'), Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50')],
-        [Markup.button.callback('💳 200 руб. (40 монет)', 'buy_200'), Markup.button.callback('💳 500 руб. (100 монет)', 'buy_500')],
-        [Markup.button.callback('💳 1000 руб. (200 монет)', 'buy_1000'), Markup.button.callback('🚀 5000 руб. (1000 монет)', 'buy_5000')],
-        [Markup.button.callback('🔙 Назад в меню', 'back_to_main')]
-    ]);
-}
-
-bot.start(async (ctx) => {
-    const userId = ctx.from.id;
-    const balance = await getBalance(userId);
-    const currentModelKey = userModels[userId] || 'flash';
-    
-    ctx.reply(
-        `Привет! Я твой продвинутый ИИ-помощник с поддержкой моделей Gemini.\n\n` +
-        `💰 Твой баланс: ${balance} 🪙\n` +
-        `🤖 Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы) за запрос)\n\n` +
-        `Выбери нужную модель или пополни баланс:`,
-        Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
-            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
-        ])
-    );
-});
-
-bot.action('set_model_flash', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Успешно! Теперь активна модель **Gemini 3.8 Flash** (списание: 1 монета за запрос).');
-});
-
-bot.action('set_model_pro', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'pro';
-    await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro / Gemini 3.1 Pro** (списание: 5 монет за запрос).');
-});
-
-bot.action('menu_buy', async (ctx) => {
-    await ctx.answerCbQuery();
-    ctx.reply('Выберите сумму пополнения баланса:', getTopUpKeyboard());
-});
-
-bot.action('back_to_main', async (ctx) => {
-    await ctx.answerCbQuery();
-    const userId = ctx.from.id;
-    const balance = await getBalance(userId);
-    const currentModelKey = userModels[userId] || 'flash';
-    ctx.reply(
-        `💰 Твой баланс: ${balance} 🪙\n🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\nВыбери модель или пополни баланс:`,
-        Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
-            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
-        ])
-    );
-});
-
-// Тарифы (от 1 до 5000 руб)
-const tariffs = [
-    { action: 'buy_1', coins: 1, price: 1 },
-    { action: 'buy_50', coins: 10, price: 50 },
-    { action: 'buy_200', coins: 40, price: 200 },
-    { action: 'buy_500', coins: 100, price: 500 },
-    { action: 'buy_1000', coins: 200, price: 1000 },
-    { action: 'buy_5000', coins: 1000, price: 5000 }
-];
-
-tariffs.forEach(tariff => {
-    bot.action(tariff.action, async (ctx) => {
-        const userId = ctx.from.id;
-        await ctx.answerCbQuery();
-        
-        const paymentData = await createYooKassaPayment(userId, tariff.coins, tariff.price);
-        if (paymentData && paymentData.confirmationUrl) {
-            ctx.reply(
-                `💳 Ссылка на оплату пакета (${tariff.coins} монет за ${tariff.price} руб) сформирована:\n\n` +
-                `⚠️ *После успешной оплаты обязательно нажмите кнопку ниже «Проверить оплату»*, если монеты не зачислились автоматически.`,
-                {
-                    parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([
-                        [Markup.button.url(`🔗 Оплатить ${tariff.price} руб.`, paymentData.confirmationUrl)],
-                        [Markup.button.callback(`🔄 Проверить оплату (${paymentData.paymentId.substring(0, 8)}...)`, `check_${paymentData.paymentId}_${tariff.coins}`)]
-                    ])
-                }
-            );
-        } else {
-            ctx.reply('Ошибка создания платежа. Попробуйте позже.');
-        }
-    });
-});
-
-// Обработка ручной проверки платежа
-bot.action(/^check_(.+)_(.+)$/, async (ctx) => {
-    const paymentId = ctx.match[1];
-    const coins = parseInt(ctx.match[2]);
-    const userId = ctx.from.id;
-
-    await ctx.answerCbQuery('Проверяем статус платежа в ЮKassa...');
-
-    const paymentInfo = await checkPaymentStatus(paymentId);
-    if (!paymentInfo) {
-        return ctx.reply('❌ Не удалось связаться с ЮKassa для проверки. Попробуйте позже.');
-    }
-
-    if (paymentInfo.status === 'succeeded') {
-        const newBalance = await updateBalance(userId, coins);
-        return ctx.reply(`🎉 Платеж успешно подтвержден! Начислено монет: ${coins}.\n💰 Ваш текущий баланс: ${newBalance} 🪙`);
-    } else if (paymentInfo.status === 'pending') {
-        return ctx.reply('⏳ Платеж еще не оплачен или обрабатывается банком. Завершите оплату по ссылке и нажмите кнопку снова.');
-    } else {
-        return ctx.reply(`❌ Статус платежа: ${paymentInfo.status}. Оплата не прошла.`);
-    }
-});
-
-// Обработка текстовых сообщений со строгой проверкой баланса
-bot.on('text', async (ctx) => {
-    const userId = ctx.from.id;
-    const text = ctx.message.text;
-
-    const modelKey = userModels[userId] || 'flash';
-    const selectedModel = MODELS[modelKey];
-
-    const balance = await getBalance(userId);
-
-    if (balance < selectedModel.cost) {
-        return ctx.reply(
-            `❌ Недостаточно монет!\n\n` +
-            `🤖 Модель: ${selectedModel.name}\n` +
-            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
-            `💰 Ваш баланс: ${balance} 🪙\n\n` +
-            `Пожалуйста, пополните баланс, выбрав сумму ниже:`,
-            getTopUpKeyboard()
-        );
-    }
-
-    try {
-        const response = await ai.models.generateContent({
-            model: selectedModel.modelId,
-            contents: text,
-        });
-
-        const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-        const newBalance = await updateBalance(userId, -selectedModel.cost);
-
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
-    } catch (error) {
-        console.error('Ошибка обращения к Gemini AI:', error);
-        ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
-    }
-});
-
-bot.launch().then(() => {
-    console.log('Telegram бот с тарифами от 1 рубля запущен!');
-});
-
-// Вебхук от ЮKassa
-app.post('/yookassa-webhook', async (req, res) => {
-    console.log('--- ПОЛУЧЕН ВЕБХУК ОТ ЮKASSA ---');
-    console.log(JSON.stringify(req.body, null, 2));
-    
-    const event = req.body;
-    if (event.event === 'payment.succeeded') {
-        const payment = event.object;
-        const metadata = payment.metadata;
-        if (metadata && metadata.user_id && metadata.coins) {
-            const userId = parseInt(metadata.user_id);
-            const coins = parseInt(metadata.coins);
-            const newBalance = await updateBalance(userId, coins);
-            bot.telegram.sendMessage(
-                userId,
-                `Оплата прошла успешно! 🎉 Начислено монет: ${coins}.\nТекущий баланс: ${newBalance} 🪙`
-            ).catch(err => console.error('Ошибка отправки сообщения о зачислении:', err));
-        }
-    }
-    res.status(200).send('OK');
-});
-
-app.get('/', (req, res) => {
-    res.send('Server is running with multi-model Gemini AI, Telegram & Firebase!');
-});
-
-app.listen(PORT, () => {
-    console.log(`Web server is running on port ${PORT}`);
-});
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
