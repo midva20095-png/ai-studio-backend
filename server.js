@@ -11,25 +11,21 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ
-const GEMINI_API_KEY = "AQ.Ab8RN6K8r-5-gRNYmczuTwZIatq_k_el2V1ySLGRnaWr-vQn8Q";
+// Ваш новый актуальный ключ API
+const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
 
-// Инициализация официального клиента Google GenAI
+// Инициализация клиента Google GenAI
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-// Актуальная модель
-const AVAILABLE_MODELS = {
-    "flash": "gemini-3.8-flash",
-    "flash2": "gemini-3.8-flash",
-    "flash-latest": "gemini-3.8-flash"
-};
+// Актуальная стабильная модель
+const MODEL_NAME = "gemini-3.8-flash";
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: "gemini-3.8-flash" };
+        users[clientId] = { ws: ws, coins: 10, model: MODEL_NAME };
     } else {
         users[clientId].ws = ws;
     }
@@ -40,13 +36,9 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка переключения моделей с кнопок Тилды
         if (text.startsWith("SET_MODEL:")) {
-            const modelKey = text.split(":")[1];
-            if (AVAILABLE_MODELS[modelKey]) {
-                user.model = AVAILABLE_MODELS[modelKey];
-                ws.send(`MODEL_UPDATED:${user.model}`);
-            }
+            user.model = MODEL_NAME;
+            ws.send(`MODEL_UPDATED:${user.model}`);
             return;
         }
 
@@ -60,24 +52,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Стабильный запрос через официальный SDK
-            const response = await ai.models.generateContent({
+            // Запрос через современный Interactions API
+            const interaction = await ai.interactions.create({
                 model: user.model,
-                contents: text,
+                input: text
             });
 
-            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = interaction.output_text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("SDK Error:", error);
+            console.error("SDK Error details:", error);
             ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Modern Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
