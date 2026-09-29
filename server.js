@@ -1,7 +1,6 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
-const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -10,11 +9,8 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const users = {};
 
-// Ваш актуальный ключ
+// Ваш ключ/токен
 const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
-
-// Инициализация официального клиента Google GenAI
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Доступные модели для переключения из виджета
 const AVAILABLE_MODELS = {
@@ -59,18 +55,32 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Запрос через официальную библиотеку Google GenAI SDK
-            const response = await ai.models.generateContent({
-                model: user.model,
-                contents: text,
+            // Передаем токен через Bearer аутентификацию, как требует Google для OAuth-креденшелов
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GEMINI_API_KEY}`
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }]
+                })
             });
 
-            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error("API Error details:", data.error);
+                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                return;
+            }
+
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("SDK Error details:", error);
-            ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
+            console.error("Fetch Error:", error);
+            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
         }
     });
 });
