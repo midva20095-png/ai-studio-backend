@@ -1,6 +1,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -10,10 +11,13 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ AQ. из интерфейса AI Studio
+// Ваш актуальный ключ AQ. из Google AI Studio
 const GEMINI_API_KEY = "AQ.Ab8RN6LL4eTaqqIp5LBp-CvaoFlv4-4nd4bqGOC1ye8cg_Wvqq";
 
-// Доступные модели для переключения кнопками в виджете Tilda
+// Инициализируем официальный SDK Google для работы с новыми ключами
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+// Доступные модели для переключения через кнопки в виджете Tilda
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -60,43 +64,29 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Для ключей AQ. передаем ключ через ?key= в URL эндпоинта
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
-            
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
+            // Официальный метод генерации через SDK, который обходит ошибки блокировки ключей
+            const response = await ai.models.generateContent({
+                model: user.model,
+                contents: text,
             });
 
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error("API Error details:", data.error);
-                if (data.error.code === 429 || data.error.status === 'RESOURCE_EXHAUSTED') {
-                    ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте другую кнопку.`);
-                } else {
-                    ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                }
-                return;
-            }
-
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("Fetch Error:", error);
-            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+            console.error("SDK Error details:", error);
+            
+            if (error.status === 429 || error.message?.includes('RESOURCE_EXHAUSTED')) {
+                ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте другую кнопку.`);
+            } else {
+                ws.send(`❌ Ошибка ИИ (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
+            }
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio AQ-Key Backend is running!');
+    res.send('AI Studio SDK Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
