@@ -1,12 +1,13 @@
 {
   "name": "ai-studio-backend",
   "version": "1.0.0",
-  "description": "AI Chat Backend for Tilda",
+  "description": "AI Chat Backend for Tilda using Google GenAI SDK",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@google/genai": "^0.1.2",
     "express": "^4.19.2",
     "ws": "^8.16.0"
   }
