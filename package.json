@@ -1,7 +1,6 @@
 {
   "name": "ai-tilda-backend",
   "version": "1.0.0",
-  "description": "Gemini AI Backend for Tilda",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
