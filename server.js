@@ -14,7 +14,7 @@ if (fs.existsSync('./firebase-key.json')) {
     });
     console.log('Firebase успешно подключен!');
 } else {
-    console.warn('ВНИМАНИЕ: Файл firebase-key.json не найден!');
+    console.warn('ВНИМАНИЕ: Файл firebase-key.json не найден! Проверьте наличие ключа в корне проекта.');
 }
 
 const db = admin.firestore();
@@ -34,13 +34,13 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Доступные модели, их названия и стоимость в монетах (1 монета = 5 рублей)
+// Актуальные модели и стоимость в монетах (1 монета = 5 рублей)
 const MODELS = {
-    'flash': { name: '⚡ Gemini Flash (Быстрая)', modelId: 'gemini-2.0-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro / Gemini Pro', modelId: 'gemini-2.5-pro', cost: 5 }
+    'flash': { name: '⚡ Gemini Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro / Gemini Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
-// Хранение выбранной модели для каждого пользователя
+// Хранение выбранной модели для каждого пользователя в памяти
 const userModels = {};
 
 // Работа с балансом через Firestore
@@ -76,7 +76,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Создание платежа ЮKassa (20 монет = 100 рублей, где 1 монета = 5 рублей)
+// Создание платежа ЮKassa (20 монет = 100 рублей)
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -110,7 +110,7 @@ bot.start(async (ctx) => {
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `Привет! Я твой продвинутый ИИ-помощник с поддержкой всех топовых моделей Gemini.\n\n` +
+        `Привет! Я твой продвинутый ИИ-помощник с поддержкой моделей Gemini.\n\n` +
         `💰 Твой баланс: ${balance} 🪙 (1 монета = 5 руб)\n` +
         `🤖 Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы) за запрос)\n\n` +
         `Выбери нужную модель или отправь текстовый вопрос:`,
@@ -168,7 +168,7 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-        // Запрос к выбранной модели через Google Gen AI SDK
+        // Запрос к актуальной платной модели через новый SDK
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
