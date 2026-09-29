@@ -10,13 +10,13 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш новый рабочий ключ
+// Ваш актуальный ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6K8r-5-gRNYmczuTwZIatq_k_el2V1ySLGRnaWr-vQn8Q";
 
-// Доступные модели для переключения из виджета
+// Актуальные модели из официальной документации
 const AVAILABLE_MODELS = {
-    "flash": "gemini-1.5-flash",
-    "flash2": "gemini-2.0-flash",
+    "flash": "gemini-3.8-flash",
+    "flash2": "gemini-3.6-flash",
     "flash-latest": "gemini-flash-latest"
 };
 
@@ -25,7 +25,7 @@ wss.on('connection', (ws, req) => {
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-3.8-flash" };
     } else {
         users[clientId].ws = ws;
     }
