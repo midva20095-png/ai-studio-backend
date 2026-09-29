@@ -1,97 +1,181 @@
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Telegraf, Markup } = require('telegraf');
+const axios = require('axios');
 
+// Инициализация сервера
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
 
-process.on('uncaughtException', (err) => console.error('UNCAUGHT EXCEPTION:', err));
-process.on('unhandledRejection', (reason) => console.error('UNHANDLED REJECTION:', reason));
+// Ключи Telegram
+const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const bot = new Telegraf(BOT_TOKEN);
 
-const apiKey = process.env.GEMINI_API_KEY;
-let genAI = null;
+// Ключи ЮKassa
+const YUKASSA_SHOP_ID = '1120841';
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-if (apiKey) {
-  genAI = new GoogleGenerativeAI(apiKey.trim());
+// База данных в памяти (потом переключим на твой Firebase)
+const userBalances = {};
+
+function getBalance(userId) {
+    if (!(userId in userBalances)) {
+        userBalances[userId] = 5; // Стартовый бонус 5 монет
+    }
+    return userBalances[userId];
 }
 
-app.get('/', (req, res) => res.send('Server is running'));
+function updateBalance(userId, amount) {
+    userBalances[userId] = getBalance(userId) + amount;
+}
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const handleChat = async (req, res) => {
-  try {
-    if (!genAI) {
-      return res.status(500).json({ 
-        reply: 'Ошибка: GEMINI_API_KEY не задан в Environment Variables на Render.' 
-      });
-    }
-
-    const { message, prompt } = req.body;
-    const userMessage = message || prompt;
-
-    if (!userMessage || typeof userMessage !== 'string' || !userMessage.trim()) {
-      return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
-    }
-
-    // Список актуальных поддерживаемых моделей
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-3.8-flash'];
-    let text = null;
-    let lastError = null;
-
-    for (const modelName of modelsToTry) {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      
-      // До 2 попыток с небольшой паузой на случай лимитов частоты (429 / 503)
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const result = await model.generateContent(userMessage.trim());
-          const response = await result.response;
-          text = response.text();
-          if (text) break;
-        } catch (err) {
-          lastError = err;
-          const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('503'));
-          
-          if (isRateLimit && attempt < 2) {
-            console.warn(`Лимит частоты для ${modelName}, пауза 1 сек...`);
-            await delay(1000);
-          } else {
-            console.warn(`Модель ${modelName} недоступна:`, err.message);
-            break; // Переходим к следующей модели в списке
-          }
+// Функция создания платежной ссылки через API ЮKassa
+async function createYooKassaPayment(userId, amountCoins, priceRub) {
+    const url = 'https://api.yookassa.ru/v3/payments';
+    
+    // Авторизация Basic для ЮKassa
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    
+    const body = {
+        amount: {
+            value: `${priceRub}.00`,
+            currency: 'RUB'
+        },
+        confirmation: {
+            type: 'redirect',
+            // Сюда пользователь вернется после оплаты (можно указать твой сайт на Тилде)
+            return_url: 'https://t.me/' + (await bot.telegram.getMe()).username
+        },
+        capture: true,
+        description: `Покупка ${amountCoins} монет в ИИ-боте`,
+        metadata: {
+            user_id: String(userId),
+            coins: String(amountCoins)
         }
-      }
+    };
 
-      if (text) break; // Успех! Выходим из цикла по моделям
+    try {
+        const response = await axios.post(url, body, {
+            headers: {
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/json',
+                'Idempotence-Key': Math.random().toString(36).substring(7)
+            }
+        });
+        return response.data.confirmation.confirmation_url; // Ссылка на оплату
+    } catch (error) {
+        console.error('Ошибка создания платежа в ЮKassa:', error.response?.data || error.message);
+        return null;
+    }
+}
+
+// Команда /start
+bot.start((ctx) => {
+    const userId = ctx.from.id;
+    const balance = getBalance(userId);
+    
+    ctx.reply(
+        `Привет! Я твой ИИ-помощник.\n` +
+        `Твой баланс: ${balance} 🪙\n\n` +
+        `Напиши мне любой вопрос, и я отвечу (списывается 1 монета).`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('💳 Купить 100 монет (100 руб)', 'buy_100')]
+        ])
+    );
+});
+
+// Кнопка покупки в боте
+bot.action('buy_100', async (ctx) => {
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery();
+    
+    const paymentUrl = await createYooKassaPayment(userId, 100, 100);
+    
+    if (paymentUrl) {
+        ctx.reply(
+            `Ссылка на оплату сформирована! 🎉\nНажми на кнопку ниже, чтобы оплатить 100 рублей через ЮKassa:`,
+            Markup.inlineKeyboard([
+                [Markup.button.url('🔗 Оплатить 100 руб.', paymentUrl)]
+            ])
+        );
+    } else {
+        ctx.reply('Произошла ошибка при создании платежа. Попробуй позже.');
+    }
+});
+
+// Текстовые сообщения (общение с ИИ)
+bot.on('text', (ctx) => {
+    const userId = ctx.from.id;
+    const balance = getBalance(userId);
+    const text = ctx.message.text;
+
+    if (balance <= 0) {
+        ctx.reply(
+            'У тебя закончились монеты! 🪙 Пополни баланс, чтобы продолжить:',
+            Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Купить монеты', 'buy_100')]
+            ])
+        );
+        return;
     }
 
-    if (text) {
-      return res.json({ reply: text });
+    updateBalance(userId, -1);
+    const newBalance = getBalance(userId);
+
+    ctx.reply(`Ответ ИИ: "${text}"\n\n*(Списана 1 монета. Остаток: ${newBalance} 🪙)*`);
+});
+
+// Запуск бота
+bot.launch().then(() => {
+    console.log('Telegram бот успешно запущен!');
+}).catch((err) => {
+    console.error('Ошибка запуска бота:', err);
+});
+
+// Эндпоинт для вебхуков от ЮKassa (сюда ЮKassa присылает уведомления об успешной оплате)
+app.post('/yookassa-webhook', (req, res) => {
+    const event = req.body;
+
+    if (event.event === 'payment.succeeded') {
+        const payment = event.object;
+        const metadata = payment.metadata;
+        
+        if (metadata && metadata.user_id && metadata.coins) {
+            const userId = parseInt(metadata.user_id);
+            const coins = parseInt(metadata.coins);
+
+            // Начисляем монеты пользователю
+            updateBalance(userId, coins);
+            const newBalance = getBalance(userId);
+
+            // Отправляем уведомление пользователю в Telegram
+            bot.telegram.sendMessage(
+                userId,
+                `Оплата прошла успешно! 🎉 Начислено монет: ${coins}.\nТвой текущий баланс: ${newBalance} 🪙`
+            ).catch(err => console.error('Не удалось отправить сообщение об оплате:', err));
+        }
     }
 
-    // Если ошибки продолжаются
-    const isQuotaExceeded = lastError?.message?.includes('429');
-    if (isQuotaExceeded) {
-      return res.status(429).json({
-        reply: 'Исчерпан лимит бесплатных запросов Gemini API в сутки. Подключите платный ключ (Pay-as-you-go) на Render или повторите попытку позже.'
-      });
-    }
+    res.status(200).send('OK');
+});
 
-    throw lastError || new Error('Не удалось получить ответ от моделей.');
+// Эндпоинт для сайта на Тилде
+app.get('/', (req, res) => {
+    res.send('Server is running with Telegram bot & YooKassa API!');
+});
 
-  } catch (error) {
-    console.error('Ошибка бэкенда:', error);
-    return res.status(500).json({ 
-      reply: `Ошибка сервера: ${error.message || 'Неизвестный сбой'}`
-    });
-  }
-};
+app.post('/chat', (req, res) => {
+    const { message, email } = req.body;
+    res.json({ reply: `Ответ с сервера для сайта: ${message}`, balance: 10 });
+});
 
-app.post('/chat', handleChat);
-app.post('/api/chat', handleChat);
+// Запуск веб-сервера
+app.listen(PORT, () => {
+    console.log(`Web server is running on port ${PORT}`);
+});
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server is running on port ${PORT}`));
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
