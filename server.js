@@ -1,7 +1,6 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
-const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -11,13 +10,10 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ AQ. из Google AI Studio
-const GEMINI_API_KEY = "AQ.Ab8RN6LL4eTaqqIp5LBp-CvaoFlv4-4nd4bqGOC1ye8cg_Wvqq";
+// Ваш актуальный ключ AQ.
+const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";
 
-// Инициализируем официальный SDK Google
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
-// Доступные модели для переключения через кнопки в виджете Tilda
+// Доступные модели для переключения кнопками
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -29,11 +25,7 @@ wss.on('connection', (ws, req) => {
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { 
-            ws: ws, 
-            coins: 10, 
-            model: "gemini-1.5-flash" 
-        };
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
     } else {
         users[clientId].ws = ws;
     }
@@ -44,7 +36,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка смены модели через кнопки в виджете
+        // Обработка смены модели через кнопки в виджете Tilda
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -64,28 +56,40 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const response = await ai.models.generateContent({
-                model: user.model,
-                contents: text,
+            // Используем рабочий формат запроса с вашим ключом
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GEMINI_API_KEY}`
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }]
+                })
             });
 
-            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error("API Error details:", data.error);
+                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                return;
+            }
+
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("SDK Error details:", error);
-            
-            if (error.status === 429 || error.message?.includes('RESOURCE_EXHAUSTED')) {
-                ws.send(`⚠️ Модель ${user.model} перегружена. Попробуйте другую кнопку.`);
-            } else {
-                ws.send(`❌ Ошибка ИИ (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
-            }
+            console.error("Fetch Error:", error);
+            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio SDK Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
