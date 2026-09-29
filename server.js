@@ -44,28 +44,29 @@ const handleChat = async (req, res) => {
       return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
     }
 
-    // Используем актуальную рабочую модель gemini-3.8-flash
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
-    
+    // Приоритетная модель gemini-3.8-flash, резервная gemini-1.5-flash
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-1.5-flash'];
     let text = null;
     let lastError = null;
 
-    // Делаем до 3 попыток с нарастающей задержкой на случай пиковой нагрузки Google (503/429)
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (const modelName of modelsToTry) {
       try {
+        const model = genAI.getGenerativeModel({ model: modelName });
         const result = await model.generateContent(userMessage.trim());
         const response = await result.response;
         text = response.text();
-        if (text) break;
+        
+        if (text) {
+          console.log(`Успешный ответ от модели: ${modelName}`);
+          break;
+        }
       } catch (err) {
         lastError = err;
-        console.warn(`Попытка ${attempt} не удалась:`, err.message);
+        console.warn(`Модель ${modelName} вернула ошибку:`, err.message);
         
-        // Если ошибка связана с перегрузкой (503 или 429), делаем паузу и пробуем снова
-        if (attempt < 3 && err.message && (err.message.includes('503') || err.message.includes('429'))) {
-          await delay(attempt * 2000); // 2 сек, затем 4 сек
-        } else {
-          break;
+        // В случае перегрузки (503/429) делаем микропаузу и сразу переходим к резервной
+        if (err.message && (err.message.includes('503') || err.message.includes('429'))) {
+          await delay(300);
         }
       }
     }
@@ -73,14 +74,13 @@ const handleChat = async (req, res) => {
     if (text) {
       return res.json({ reply: text });
     } else {
-      throw lastError || new Error('Не удалось получить ответ от Gemini API.');
+      throw lastError || new Error('Все модели временно недоступны.');
     }
 
   } catch (error) {
     console.error('Ошибка бэкенда:', error);
-    // Выводим точный текст ошибки прямо в чат для отладки
     return res.status(500).json({ 
-      reply: `Ошибка Gemini API: ${error.message || 'Неизвестная ошибка на сервере'}`
+      reply: 'Сервер сейчас очень загружен. Попробуйте повторить запрос через пару секунд.'
     });
   }
 };
