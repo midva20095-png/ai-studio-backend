@@ -31,7 +31,7 @@ const handleChat = async (req, res) => {
   try {
     if (!genAI) {
       return res.status(500).json({ 
-        reply: 'Ошибка: Переменная GEMINI_API_KEY не задана в Environment Variables на Render.' 
+        reply: 'Ошибка: Переменная GEMINI_API_KEY не задана на сервере.' 
       });
     }
 
@@ -39,20 +39,37 @@ const handleChat = async (req, res) => {
     const userMessage = message || prompt;
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim() === '') {
-      return res.status(400).json({ reply: 'Ошибка: Сообщение не передано или пустое.' });
+      return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
     }
 
-    // Перешли на актуальную модель gemini-3.8-flash
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
-    const result = await model.generateContent(userMessage.trim());
-    const response = await result.response;
-    const text = response.text();
+    // Список моделей по приоритету (если первая перегружена, сработает следующая)
+    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
+    let text = null;
+    let lastError = null;
 
-    return res.json({ reply: text });
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(userMessage.trim());
+        const response = await result.response;
+        text = response.text();
+        if (text) break; // Ответ успешно получен!
+      } catch (err) {
+        console.warn(`Модель ${modelName} недоступна, пробуем следующую...`, err.message);
+        lastError = err;
+      }
+    }
+
+    if (text) {
+      return res.json({ reply: text });
+    } else {
+      throw lastError || new Error('Сервисы Google сейчас перегружены.');
+    }
+
   } catch (error) {
     console.error('Детали ошибки Gemini API:', error);
     return res.status(500).json({ 
-      reply: `Ошибка API: ${error.message || 'Неизвестная ошибка на сервере'}`
+      reply: 'Сервер сейчас очень загружен. Попробуйте повторить запрос через 10–15 секунд.'
     });
   }
 };
