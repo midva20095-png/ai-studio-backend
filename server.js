@@ -27,36 +27,13 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// Вспомогательная функция задержки
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Функция запроса к модели с повторными попытками при ошибках 503/429
-async function generateWithRetry(modelName, prompt, retries = 2) {
-  const model = genAI.getGenerativeModel({ model: modelName });
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      if (text) return text;
-    } catch (err) {
-      const isRateLimitOrOverload = err.message && (err.message.includes('503') || err.message.includes('429'));
-      if (isRateLimitOrOverload && attempt < retries) {
-        console.warn(`Модель ${modelName} перегружена (попытка ${attempt + 1}). Ждем 1 сек...`);
-        await delay(1000);
-      } else {
-        throw err;
-      }
-    }
-  }
-  throw new Error(`Не удалось получить ответ от ${modelName}`);
-}
 
 const handleChat = async (req, res) => {
   try {
     if (!genAI) {
       return res.status(500).json({ 
-        reply: 'Ошибка: Переменная GEMINI_API_KEY не задана на сервере.' 
+        reply: 'Ошибка: Переменная GEMINI_API_KEY не задана на сервере Render.' 
       });
     }
 
@@ -67,31 +44,43 @@ const handleChat = async (req, res) => {
       return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
     }
 
-    // Список моделей по приоритету стабильности
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
+    // Используем актуальную рабочую модель gemini-3.8-flash
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
+    
     let text = null;
     let lastError = null;
 
-    for (const modelName of modelsToTry) {
+    // Делаем до 3 попыток с нарастающей задержкой на случай пиковой нагрузки Google (503/429)
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        text = await generateWithRetry(modelName, userMessage.trim());
+        const result = await model.generateContent(userMessage.trim());
+        const response = await result.response;
+        text = response.text();
         if (text) break;
       } catch (err) {
-        console.warn(`Ошибка с моделью ${modelName}:`, err.message);
         lastError = err;
+        console.warn(`Попытка ${attempt} не удалась:`, err.message);
+        
+        // Если ошибка связана с перегрузкой (503 или 429), делаем паузу и пробуем снова
+        if (attempt < 3 && err.message && (err.message.includes('503') || err.message.includes('429'))) {
+          await delay(attempt * 2000); // 2 сек, затем 4 сек
+        } else {
+          break;
+        }
       }
     }
 
     if (text) {
       return res.json({ reply: text });
     } else {
-      throw lastError || new Error('Сервисы Google временно недоступны.');
+      throw lastError || new Error('Не удалось получить ответ от Gemini API.');
     }
 
   } catch (error) {
     console.error('Ошибка бэкенда:', error);
+    // Выводим точный текст ошибки прямо в чат для отладки
     return res.status(500).json({ 
-      reply: 'Сервер перегружен. Пожалуйста, повторите попытку через пару секунд.'
+      reply: `Ошибка Gemini API: ${error.message || 'Неизвестная ошибка на сервере'}`
     });
   }
 };
