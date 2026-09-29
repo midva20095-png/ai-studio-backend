@@ -19,7 +19,7 @@ if (fs.existsSync('./firebase-key.json')) {
 
 const db = admin.firestore();
 
-// Инициализация Google Gen AI с переменной окружения из Render
+// Инициализация Google Gen AI с платным ключом
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
@@ -33,6 +33,15 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+
+// Словарь моделей и стоимости в монетах
+const MODELS = {
+    'flash': { name: '⚡ Gemini Flash (Быстрая)', modelId: 'gemini-2.0-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro / Gemini Pro', modelId: 'gemini-2.5-pro', cost: 5 }
+};
+
+// Хранение выбранной модели для каждого пользователя в памяти (или можно сохранять в Firestore)
+const userModels = {};
 
 // Работа с балансом через Firestore
 async function getBalance(userId) {
@@ -67,7 +76,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Создание платежа ЮKassa
+// Создание платежа ЮKassa (1 монета = 5 рублей, значит 100 монет = 500 руб, или подстроим под твои пакеты)
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -98,23 +107,43 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const balance = await getBalance(userId);
+    const currentModelKey = userModels[userId] || 'flash';
+    
     ctx.reply(
-        `Привет! Я твой ИИ-помощник на базе Gemini.\n` +
-        `Твой баланс: ${balance} 🪙\n\n` +
-        `Напиши мне любой вопрос, и я отвечу (списывается 1 монета).`,
+        `Привет! Я твой продвинутый ИИ-помощник.\n` +
+        `Твой баланс: ${balance} 🪙\n` +
+        `Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы))\n\n` +
+        `Выбери модель или просто напиши мне вопрос:`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('💳 Купить 100 монет (100 руб)', 'buy_100')]
+            [Markup.button.callback('⚡ Gemini Flash (1 монета)', 'set_model_flash')],
+            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
+            [Markup.button.callback('💳 Купить 20 монет (100 руб)', 'buy_100')]
         ])
     );
+});
+
+bot.action('set_model_flash', async (ctx) => {
+    const userId = ctx.from.id;
+    userModels[userId] = 'flash';
+    await ctx.answerCbQuery('Выбрана модель Flash (1 монета за запрос)');
+    ctx.reply('✅ Успешно! Теперь активна модель **Gemini Flash** (списание: 1 монета за запрос).');
+});
+
+bot.action('set_model_pro', async (ctx) => {
+    const userId = ctx.from.id;
+    userModels[userId] = 'pro';
+    await ctx.answerCbQuery('Выбрана модель Pro / Nano Banana Pro (5 монет)');
+    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro** (списание: 5 монет за запрос).');
 });
 
 bot.action('buy_100', async (ctx) => {
     const userId = ctx.from.id;
     await ctx.answerCbQuery();
-    const paymentUrl = await createYooKassaPayment(userId, 100, 100);
+    // 20 монет по 5 рублей = 100 рублей (или настрой под свои объемы)
+    const paymentUrl = await createYooKassaPayment(userId, 20, 100);
     if (paymentUrl) {
         ctx.reply(
-            `Ссылка на оплату сформирована! 🎉`,
+            `Ссылка на оплату сформирована (20 монет = 100 руб): 🎉`,
             Markup.inlineKeyboard([[Markup.button.url('🔗 Оплатить 100 руб.', paymentUrl)]])
         );
     } else {
@@ -122,33 +151,36 @@ bot.action('buy_100', async (ctx) => {
     }
 });
 
-// Обработка текстовых сообщений через Gemini API
+// Обработка текстовых сообщений с учетом выбранной модели и стоимости
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await getBalance(userId);
     const text = ctx.message.text;
 
-    if (balance <= 0) {
+    const modelKey = userModels[userId] || 'flash';
+    const selectedModel = MODELS[modelKey];
+
+    if (balance < selectedModel.cost) {
         ctx.reply(
-            'У тебя закончились монеты! 🪙 Пополни баланс:',
+            `Недостаточно монет! 🪙 Для модели ${selectedModel.name} нужно ${selectedModel.cost} монета(ы). Твой баланс: ${balance}.\nПополни баланс:`,
             Markup.inlineKeyboard([[Markup.button.callback('💳 Купить монеты', 'buy_100')]])
         );
         return;
     }
 
     try {
-        // Отправка запроса к актуальной модели Gemini
+        // Отправка запроса к выбранной платной модели Gemini
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: selectedModel.modelId,
             contents: text,
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
 
-        // Списываем 1 монету после успешного ответа
-        const newBalance = await updateBalance(userId, -1);
+        // Списываем стоимость модели
+        const newBalance = await updateBalance(userId, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(Списана 1 монета. Остаток: ${newBalance} 🪙)*`);
+        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
@@ -156,7 +188,7 @@ bot.on('text', async (ctx) => {
 });
 
 bot.launch().then(() => {
-    console.log('Telegram бот с Gemini успешно запущен!');
+    console.log('Telegram бот с выбором моделей успешно запущен!');
 });
 
 app.post('/yookassa-webhook', async (req, res) => {
@@ -178,7 +210,7 @@ app.post('/yookassa-webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Server is running with Gemini AI, Telegram & Firebase!');
+    res.send('Server is running with multi-model Gemini AI, Telegram & Firebase!');
 });
 
 app.listen(PORT, () => {
