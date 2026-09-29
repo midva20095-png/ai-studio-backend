@@ -6,15 +6,21 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
-// Инициализация Firebase
-if (fs.existsSync('./firebase-key.json')) {
+// Инициализация Firebase (поддержка и локального файла, и переменных окружения Render)
+if (process.env.FIREBASE_CONFIG_JSON) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('Firebase успешно подключен через переменные окружения!');
+} else if (fs.existsSync('./firebase-key.json')) {
     const serviceAccount = require('./firebase-key.json');
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
     });
-    console.log('Firebase успешно подключен!');
+    console.log('Firebase успешно подключен из локального файла!');
 } else {
-    console.warn('ВНИМАНИЕ: Файл firebase-key.json не найден! Проверьте наличие ключа в корне проекта.');
+    console.warn('ВНИМАНИЕ: Ключ Firebase не найден ни в файле, ни в переменных окружения!');
 }
 
 const db = admin.firestore();
@@ -76,7 +82,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Универсальная функция создания платежа ЮKassa на любую сумму
+// Создание платежа ЮKassa с сохранением монет и user_id в metadata
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -97,9 +103,27 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
                 'Idempotence-Key': Math.random().toString(36).substring(7)
             }
         });
-        return response.data.confirmation.confirmation_url;
+        return {
+            confirmationUrl: response.data.confirmation.confirmation_url,
+            paymentId: response.data.id
+        };
     } catch (error) {
         console.error('Ошибка ЮKassa:', error.response?.data || error.message);
+        return null;
+    }
+}
+
+// Проверка статуса платежа через API ЮKassa
+async function checkPaymentStatus(paymentId) {
+    const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    try {
+        const response = await axios.get(url, {
+            headers: { 'Authorization': `Basic ${authString}` }
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Ошибка проверки статуса платежа:', error.response?.data || error.message);
         return null;
     }
 }
@@ -107,7 +131,7 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
 // Главная клавиатура выбора пополнения (от 50 до 5000 руб)
 function getTopUpKeyboard() {
     return Markup.inlineKeyboard([
-        [Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50'), Markup.button.callback('💳 200 руб. (40 монет)', 'buy_200')],
+        [Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50'), Markup.button.callback('💳 200 руб. (40 монет', 'buy_200')],
         [Markup.button.callback('💳 500 руб. (100 монет)', 'buy_500'), Markup.button.callback('💳 1000 руб. (200 монет)', 'buy_1000')],
         [Markup.button.callback('🚀 5000 руб. (1000 монет)', 'buy_5000')],
         [Markup.button.callback('🔙 Назад в меню', 'back_to_main')]
@@ -179,16 +203,53 @@ tariffs.forEach(tariff => {
     bot.action(tariff.action, async (ctx) => {
         const userId = ctx.from.id;
         await ctx.answerCbQuery();
-        const paymentUrl = await createYooKassaPayment(userId, tariff.coins, tariff.price);
-        if (paymentUrl) {
+        const paymentData = await createYooKassaPayment(userId, tariff.coins, tariff.price);
+        
+        if (paymentData && paymentData.confirmationUrl) {
             ctx.reply(
-                `💳 Ссылка на оплату пакета (${tariff.coins} монет за ${tariff.price} руб) сформирована:`,
-                Markup.inlineKeyboard([[Markup.button.url(`🔗 Оплатить ${tariff.price} руб.`, paymentUrl)]])
+                `💳 Ссылка на оплату пакета (${tariff.coins} монет за ${tariff.price} руб) сформирована:\n\n` +
+                `⚠️ *Если оплатили, но монеты не зачислились автоматически, нажмите кнопку ниже:*`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.url(`🔗 Оплатить ${tariff.price} руб.`, paymentData.confirmationUrl)],
+                        [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentData.paymentId}`)]
+                    ])
+                }
             );
         } else {
             ctx.reply('Ошибка создания платежа. Попробуйте позже.');
         }
     });
+});
+
+// Надежная ручная проверка платежа через метаданные ЮKassa
+bot.action(/^check_(.+)$/, async (ctx) => {
+    const paymentId = ctx.match[1];
+    const userId = ctx.from.id;
+
+    await ctx.answerCbQuery('Проверяем статус платежа...');
+
+    const paymentInfo = await checkPaymentStatus(paymentId);
+    if (!paymentInfo) {
+        return ctx.reply('❌ Не удалось связаться с ЮKassa для проверки. Попробуйте позже.');
+    }
+
+    if (paymentInfo.status === 'succeeded') {
+        // Достаем количество монет строго из метаданных платежа ЮKassa, исключая любые баги с нулями
+        const coins = parseInt(paymentInfo.metadata?.coins) || 0;
+        
+        if (coins <= 0) {
+            return ctx.reply('❌ Ошибка: не удалось определить количество монет для этого платежа.');
+        }
+
+        const newBalance = await updateBalance(userId, coins);
+        return ctx.reply(`🎉 Оплата прошла успешно! Начислено монет: ${coins}.\n💰 Ваш текущий баланс: ${newBalance} 🪙`);
+    } else if (paymentInfo.status === 'pending') {
+        return ctx.reply('⏳ Платеж еще не оплачен или обрабатывается банком. Завершите оплату по ссылке и нажмите кнопку снова.');
+    } else {
+        return ctx.reply(`❌ Статус платежа: ${paymentInfo.status}. Оплата не прошла.`);
+    }
 });
 
 // Обработка текстовых сообщений со строгой проверкой баланса
@@ -199,7 +260,6 @@ bot.on('text', async (ctx) => {
     const modelKey = userModels[userId] || 'flash';
     const selectedModel = MODELS[modelKey];
 
-    // Жестко запрашиваем актуальный баланс из базы прямо перед отправкой
     const balance = await getBalance(userId);
 
     if (balance < selectedModel.cost) {
@@ -214,15 +274,12 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-        // Запрос к актуальной модели через Google Gen AI SDK
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-
-        // Списываем стоимость модели в монетах после успешного ответа
         const newBalance = await updateBalance(userId, -selectedModel.cost);
 
         ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
@@ -236,6 +293,7 @@ bot.launch().then(() => {
     console.log('Telegram бот с выбором тарифов пополнения успешно запущен!');
 });
 
+// Вебхук от ЮKassa
 app.post('/yookassa-webhook', async (req, res) => {
     const event = req.body;
     if (event.event === 'payment.succeeded') {
