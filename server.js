@@ -69,6 +69,7 @@ async function updateBalance(userId, amount) {
         }
         const newBalance = currentBalance + amount;
         await userRef.set({ balance: newBalance, updated_at: new Date() }, { merge: true });
+        console.log(`Баланс пользователя ${userId} изменен на ${amount}. Итог: ${newBalance}`);
         return newBalance;
     } catch (error) {
         console.error('Ошибка обновления баланса:', error);
@@ -76,10 +77,8 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Функция генерации ссылки на оплату ЮKassa
-async function generatePaymentLink(ctx, userId, amountRub) {
-    const coins = amountRub === 1 ? 1 : Math.max(1, Math.round(amountRub / 5));
-
+// Генерация ссылки на оплату с фиксированными суммами
+async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
     
@@ -87,8 +86,8 @@ async function generatePaymentLink(ctx, userId, amountRub) {
         amount: { value: `${amountRub}.00`, currency: 'RUB' },
         confirmation: { type: 'redirect', return_url: 'https://t.me/' + (await bot.telegram.getMe()).username },
         capture: true,
-        description: `Покупка ${coins} монет в ИИ-боте (Сумма: ${amountRub} руб)`,
-        metadata: { user_id: String(userId), coins: String(coins) }
+        description: `Покупка ${coinsCount} токенов (Сумма: ${amountRub} руб)`,
+        metadata: { user_id: String(userId), coins: String(coinsCount) }
     };
 
     try {
@@ -108,8 +107,8 @@ async function generatePaymentLink(ctx, userId, amountRub) {
         return ctx.reply(
             `💳 Ссылка на оплату создана!\n\n` +
             `💵 Сумма: ${amountRub} руб.\n` +
-            `🪙 Будет начислено монет: ${coins}\n\n` +
-            `⚠️ *Если оплатили, но монеты не зачислились автоматически, нажмите кнопку проверки:*`,
+            `🪙 Токенов к зачислению: ${coinsCount}\n\n` +
+            `⚠️ *Оплатите по ссылке, а затем нажмите кнопку «🔄 Проверить оплату»:*`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
@@ -145,13 +144,13 @@ bot.start(async (ctx) => {
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `Привет! Я твой продвинутый ИИ-помощник с поддержкой моделей Gemini.\n\n` +
+        `Привет! Я твой ИИ-помощник.\n\n` +
         `💰 Твой баланс: ${balance} 🪙\n` +
-        `🤖 Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы) за запрос)\n\n` +
+        `🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\n` +
         `Выбери нужную модель или пополни баланс:`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
+            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+            [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
             [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
         ])
     );
@@ -161,14 +160,14 @@ bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
     await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Успешно! Теперь активна модель **Gemini 3.8 Flash**.');
+    ctx.reply('✅ Успешно! Активна модель **Gemini 3.8 Flash**.');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
     await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro / Gemini 3.1 Pro**.');
+    ctx.reply('🧠 Успешно! Активна премиум-модель **Nano Banana Pro**.');
 });
 
 bot.action('menu_buy', async (ctx) => {
@@ -176,27 +175,27 @@ bot.action('menu_buy', async (ctx) => {
     
     ctx.reply(
         `💳 *Пополнение баланса*\n\n` +
-        `Выберите удобную сумму для пополнения (от 1 до 5000 рублей):`,
+        `Выберите пакет токенов:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('💎 1 рубль (Тест)', 'pay_1')],
-                [Markup.button.callback('🪙 50 руб (10 монет)', 'pay_50'), Markup.button.callback('🪙 100 руб (20 монет)', 'pay_100')],
-                [Markup.button.callback('🪙 500 руб (100 монет)', 'pay_500'), Markup.button.callback('🪙 1000 руб (200 монет)', 'pay_1000')],
-                [Markup.button.callback('🚀 5000 руб (1000 монет)', 'pay_5000')],
+                [Markup.button.callback('💎 1 рубль (1 токен - тест)', 'pay_1')],
+                [Markup.button.callback('🪙 50 руб (10 токенов)', 'pay_50'), Markup.button.callback('🪙 100 руб (20 токенов)', 'pay_100')],
+                [Markup.button.callback('🪙 500 руб (100 токенов)', 'pay_500'), Markup.button.callback('🪙 1000 руб (200 токенов)', 'pay_1000')],
+                [Markup.button.callback('🚀 5000 руб (1000 токенов)', 'pay_5000')],
                 [Markup.button.callback('🔙 На главную', 'back_to_main')]
             ])
         }
     );
 });
 
-// Обработка кнопок фиксированных сумм
-bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1); });
-bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50); });
-bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100); });
-bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500); });
-bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000); });
-bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000); });
+// Кнопки пополнения
+bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
+bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50, 10); });
+bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
+bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
+bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
+bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
 bot.action('back_to_main', async (ctx) => {
     await ctx.answerCbQuery();
@@ -204,39 +203,48 @@ bot.action('back_to_main', async (ctx) => {
     const balance = await getBalance(userId);
     const currentModelKey = userModels[userId] || 'flash';
     ctx.reply(
-        `💰 Твой баланс: ${balance} 🪙\n🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\nВыбери модель или пополни баланс:`,
+        `💰 Твой баланс: ${balance} 🪙\n🤖 Текущая модель: *${MODELS[currentModelKey].name}*`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
+            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+            [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
             [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
         ])
     );
 });
 
+// ГЛАВНАЯ ЛОГИКА ПО ТВОЕМУ ЗАПРОСУ: Проверка и выдача по сообщению от ЮKassa
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
 
-    await ctx.answerCbQuery('Проверяем статус платежа...');
+    await ctx.answerCbQuery('Проверяем платеж...');
 
     const paymentInfo = await checkPaymentStatus(paymentId);
     if (!paymentInfo) {
-        return ctx.reply('❌ Не удалось связаться с ЮKassa для проверки. Попробуйте позже.');
+        return ctx.reply('❌ Не удалось связаться с платежной системой. Попробуйте позже.');
     }
 
+    // ЕСЛИ ОПЛАТИЛ УСПЕШНО
     if (paymentInfo.status === 'succeeded') {
-        const coins = parseInt(paymentInfo.metadata?.coins) || 0;
-        
-        if (coins <= 0) {
-            return ctx.reply('❌ Ошибка: не удалось определить количество монет для этого платежа.');
-        }
+        const coins = parseInt(paymentInfo.metadata?.coins) || 1;
+        const amountPaid = paymentInfo.amount?.value || '';
 
+        // Начисляем токены на баланс
         const newBalance = await updateBalance(userId, coins);
-        return ctx.reply(`🎉 Оплата прошла успешно! Начислено монет: ${coins}.\n💰 Ваш текущий баланс: ${newBalance} 🪙`);
-    } else if (paymentInfo.status === 'pending') {
-        return ctx.reply('⏳ Платеж еще не оплачен или обрабатывается банком. Завершите оплату по ссылке и нажмите кнопку снова.');
-    } else {
-        return ctx.reply(`❌ Статус платежа: ${paymentInfo.status}. Оплата не прошла.`);
+
+        // Отправляем то самое сообщение об успешной оплате, как ты и сказал
+        return ctx.reply(
+            `✅ Вы успешно купили ${coins} токенов этой херни! (Сумма: ${amountPaid} руб.)\n` +
+            `🎉 Баланс успешно пополнен.\n` +
+            `💰 Ваш текущий баланс: ${newBalance} 🪙`
+        );
+    } 
+    // ЕСЛИ НЕ ОПЛАТИЛ НИХУЯ
+    else {
+        return ctx.reply(
+            `❌ Вы не оплатили нихуя! Платеж не найден или находится в статусе: ${paymentInfo.status}.\n` +
+            `Деньги не списаны, токены не начислены.`
+        );
     }
 });
 
@@ -251,7 +259,7 @@ bot.on('text', async (ctx) => {
 
     if (balance < selectedModel.cost) {
         return ctx.reply(
-            `❌ Недостаточно монет!\n\n` +
+            `❌ Недостаточно токенов на балансе!\n\n` +
             `🤖 Модель: ${selectedModel.name}\n` +
             `📉 Требуется: ${selectedModel.cost} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
@@ -287,26 +295,8 @@ if (RENDER_EXTERNAL_URL) {
     console.warn('ВНИМАНИЕ: Переменная RENDER_EXTERNAL_URL не найдена. Вебхук Telegram не установлен!');
 }
 
-app.post('/yookassa-webhook', async (req, res) => {
-    const event = req.body;
-    if (event.event === 'payment.succeeded') {
-        const payment = event.object;
-        const metadata = payment.metadata;
-        if (metadata && metadata.user_id && metadata.coins) {
-            const userId = parseInt(metadata.user_id);
-            const coins = parseInt(metadata.coins);
-            const newBalance = await updateBalance(userId, coins);
-            bot.telegram.sendMessage(
-                userId,
-                `Оплата прошла успешно! 🎉 Начислено монет: ${coins}.\nТекущий баланс: ${newBalance} 🪙`
-            ).catch(err => console.error(err));
-        }
-    }
-    res.status(200).send('OK');
-});
-
 app.get('/', (req, res) => {
-    res.send('Server is running with buttons top-up, webhooks & Firebase!');
+    res.send('Server is running!');
 });
 
 app.listen(PORT, () => {
