@@ -10,13 +10,13 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const users = {};
 
-// Ваш актуальный ключ API
+// Ваш актуальный ключ API (также продублируем в process.env для надежности SDK)
 const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
+process.env.GEMINI_API_KEY = GEMINI_API_KEY;
 
-// Инициализация клиента Google GenAI
+// Инициализация клиента Google GenAI с явной передачей ключа
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-// Доступные модели (актуальные бесплатные версии)
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
 wss.on('connection', (ws, req) => {
@@ -35,7 +35,6 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка переключения моделей
         if (text.startsWith("SET_MODEL:")) {
             const requestedModel = text.split(":")[1];
             if (["gemini-2.5-flash", "gemini-2.5-pro"].includes(requestedModel)) {
@@ -55,13 +54,14 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Современный запрос к модели через SDK Google GenAI
+            // Корректный вызов генерации контента через SDK @google/genai
             const response = await ai.models.generateContent({
                 model: user.model,
-                contents: text
+                contents: [text],
             });
 
-            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
+            // Извлекаем текст ответа согласно структуре SDK
+            const aiReply = response.text || (response.candidates && response.candidates[0]?.content?.parts[0]?.text) || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
