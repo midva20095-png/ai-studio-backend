@@ -19,8 +19,8 @@ if (fs.existsSync('./firebase-key.json')) {
 
 const db = admin.firestore();
 
-// Инициализация Google Gen AI с твоим платным ключом
-const ai = new GoogleGenAI({ apiKey: 'AQ.Ab8RN6LP7u_9IDaboBJhngJ7SpVnLqGfSDeWS3Lroctz4KQ7KA' });
+// Инициализация Google Gen AI с переменной окружения из Render
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -137,7 +137,7 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-        // Отправка запроса к официальной модели Gemini
+        // Отправка запроса к актуальной модели Gemini
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: text,
