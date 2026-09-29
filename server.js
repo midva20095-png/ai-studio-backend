@@ -11,13 +11,16 @@ app.use(cors());
 app.use(express.json());
 
 const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const bot = new Telegraf(BOT_TOKEN);
-
+const YUKASSA_SHOP_ID = '1120841';
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
+const bot = new Telegraf(BOT_TOKEN);
+
+// Полный каталог моделей с правильными ID и стоимостью в токенах
 const MODELS = {
+    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-2.5-flash', cost: 12 },
     'pro_3_1': { name: '🧠 Gemini 3.1 Pro (Thinking)', modelId: 'gemini-2.5-pro', cost: 25 },
-    'flash_3_8': { name: '⚡ Gemini 3.8 / 3.5 Flash', modelId: 'gemini-2.5-flash', cost: 12 },
     'flash_lite': { name: '🚀 Gemini 3.1 Flash-Lite', modelId: 'gemini-2.5-flash-lite', cost: 8 },
     'nano_banana': { name: '🎨 Nano Banana Pro', modelId: 'gemini-2.5-flash', cost: 15 },
     'veo': { name: '🎬 Veo Video Generator', modelId: 'gemini-2.5-flash', cost: 50 },
@@ -41,45 +44,103 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
+async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
+    const url = 'https://api.yookassa.ru/v3/payments';
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    
+    const body = {
+        amount: { value: `${amountRub}.00`, currency: 'RUB' },
+        confirmation: { type: 'redirect', return_url: 'https://t.me/' + (await bot.telegram.getMe()).username },
+        capture: true,
+        description: `Покупка ${coinsCount} токенов (Сумма: ${amountRub} руб)`,
+        metadata: { user_id: String(userId), coins: String(coinsCount) }
+    };
+
+    try {
+        const response = await axios.post(url, body, {
+            headers: {
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/json',
+                'Idempotence-Key': Math.random().toString(36).substring(7)
+            }
+        });
+
+        const paymentData = {
+            confirmationUrl: response.data.confirmation.confirmation_url,
+            paymentId: response.data.id
+        };
+
+        return ctx.reply(
+            `💳 Ссылка на оплату создана!\n\n` +
+            `💵 Сумма: ${amountRub} руб.\n` +
+            `🪙 Токенов к зачислению: ${coinsCount}\n\n` +
+            `⚠️ Оплатите по ссылке, а затем нажмите кнопку «🔄 Проверить оплату»:`,
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, paymentData.confirmationUrl)],
+                    [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentData.paymentId}`)],
+                    [Markup.button.callback(`🔙 На главную`, `menu_main`)]
+                ])
+            }
+        );
+    } catch (error) {
+        console.error('Ошибка ЮKassa:', error.response?.data || error.message);
+        return ctx.reply('❌ Ошибка создания платежа в ЮKassa. Попробуйте позже.');
+    }
+}
+
+async function checkPaymentStatus(paymentId) {
+    const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    try {
+        const response = await axios.get(url, {
+            headers: { 'Authorization': `Basic ${authString}` }
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Ошибка проверки статуса платежа:', error.response?.data || error.message);
+        return null;
+    }
+}
+
+// Красивое главное меню в виде сетки
 async function sendMainMenu(ctx, edit = false) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
     const balance = await callGoogleSheet('get', userId, username);
     const modelKey = userModels[userId] || 'flash_3_8';
+    const currentModel = MODELS[modelKey];
 
     const text = 
         `🤖 **AI Studio Hub — Панель управления**\n\n` +
         `👤 Пользователь: *${username}*\n` +
-        `💰 Баланс: *${balance !== null ? balance : '0'} 🪙*\n` +
-        `⚙️ Инструмент: *${MODELS[modelKey].name}* (${MODELS[modelKey].cost} 🪙)\n\n` +
+        `🆔 Твой ID: \`${userId}\`\n` +
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
+        `⚙️ Инструмент: *${currentModel.name}* (${currentModel.cost} 🪙)\n\n` +
         `Выберите нужный инструмент или модель:`;
 
     const keyboard = Markup.inlineKeyboard([
         [
-            Markup.button.callback('⚡ Flash 3.8', 'set_flash_3_8'),
-            Markup.button.callback('🧠 Pro 3.1', 'set_pro_3_1')
+            Markup.button.callback('⚡ Flash 3.8', 'set_model_flash_3_8'),
+            Markup.button.callback('🧠 Pro 3.1', 'set_model_pro_3_1')
         ],
         [
-            Markup.button.callback('🚀 Flash-Lite', 'set_flash_lite'),
-            Markup.button.callback('🎨 Nano Banana', 'set_nano_banana')
+            Markup.button.callback('🚀 Flash-Lite', 'set_model_flash_lite'),
+            Markup.button.callback('🎨 Nano Banana', 'set_model_nano_banana')
         ],
         [
-            Markup.button.callback('🎬 Veo Video', 'set_veo'),
-            Markup.button.callback('🎵 Lyria Music', 'set_lyria')
+            Markup.button.callback('🎬 Veo Video', 'set_model_veo'),
+            Markup.button.callback('🎵 Lyria Music', 'set_model_lyria')
         ],
         [
-            Markup.button.callback('🔄 Обновить баланс', 'refresh_menu')
+            Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')
         ]
     ]);
 
     try {
         if (edit && ctx.callbackQuery) {
-            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }).catch((err) => {
-                // Игнорируем ошибку, если текст сообщения не изменился
-                if (!err.description?.includes('message is not modified')) {
-                    console.error('Ошибка редактирования сообщения:', err);
-                }
-            });
+            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
             return;
         }
     } catch (e) {}
@@ -95,18 +156,14 @@ bot.command('menu', async (ctx) => {
     await sendMainMenu(ctx, false);
 });
 
-bot.action('refresh_menu', async (ctx) => {
-    await ctx.answerCbQuery('Баланс проверен!');
-    await sendMainMenu(ctx, true);
-});
-
+// Назначение моделей через кнопки
 const modelActions = {
-    'set_flash_3_8': 'flash_3_8',
-    'set_pro_3_1': 'pro_3_1',
-    'set_flash_lite': 'flash_lite',
-    'set_nano_banana': 'nano_banana',
-    'set_veo': 'veo',
-    'set_lyria': 'lyria'
+    'set_model_flash_3_8': 'flash_3_8',
+    'set_model_pro_3_1': 'pro_3_1',
+    'set_model_flash_lite': 'flash_lite',
+    'set_model_nano_banana': 'nano_banana',
+    'set_model_veo': 'veo',
+    'set_model_lyria': 'lyria'
 };
 
 for (const [actionName, modelKey] of Object.entries(modelActions)) {
@@ -117,13 +174,87 @@ for (const [actionName, modelKey] of Object.entries(modelActions)) {
     });
 }
 
+bot.action('menu_buy', async (ctx) => {
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id;
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
+
+    ctx.reply(
+        `💳 **Пополнение баланса**\n\n` +
+        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n\n` +
+        `Выберите пакет токенов:`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('💎 1 рубль (Тест)', 'pay_1')],
+                [Markup.button.callback('🪙 50 руб (10 токенов)', 'pay_50'), Markup.button.callback('🪙 100 руб (20 токенов)', 'pay_100')],
+                [Markup.button.callback('🪙 500 руб (100 токенов)', 'pay_500'), Markup.button.callback('🪙 1000 руб (200 токенов)', 'pay_1000')],
+                [Markup.button.callback('🚀 5000 руб (1000 токенов)', 'pay_5000')],
+                [Markup.button.callback('🔙 На главную', 'menu_main')]
+            ])
+        }
+    );
+});
+
+bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
+bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50, 10); });
+bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
+bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
+bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
+bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
+
+bot.action('menu_main', async (ctx) => {
+    await ctx.answerCbQuery();
+    await sendMainMenu(ctx, true);
+});
+
+bot.action(/^check_(.+)$/, async (ctx) => {
+    const paymentId = ctx.match[1];
+    const userId = ctx.from.id;
+
+    await ctx.answerCbQuery('Проверяем платеж...');
+
+    const paymentInfo = await checkPaymentStatus(paymentId);
+    if (!paymentInfo) {
+        return ctx.reply('❌ Не удалось связаться с ЮKassa. Попробуйте позже.');
+    }
+
+    if (paymentInfo.status === 'succeeded') {
+        const coins = parseInt(paymentInfo.metadata?.coins) || 1;
+        const amountPaid = paymentInfo.amount?.value || '';
+
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, coins);
+
+        try {
+            await ctx.editMessageText(
+                `✅ Платеж успешно подтвержден!\n` +
+                `💵 Сумма: ${amountPaid} руб.\n` +
+                `🪙 Зачислено токенов: ${coins}\n` +
+                `💰 Ваш новый баланс: ${newBalance} 🪙`
+            );
+        } catch (e) {}
+
+        return ctx.reply(
+            `🎉 Баланс успешно пополнен на ${coins} токенов!\n` +
+            `💰 Текущий баланс: ${newBalance} 🪙`,
+            Markup.inlineKeyboard([[Markup.button.callback('🔙 На главную', 'menu_main')]])
+        );
+    } else {
+        return ctx.reply(
+            `❌ Платеж еще не прошел или имеет статус: ${paymentInfo.status}.\n` +
+            `Оплатите по ссылке и попробуйте снова.`
+        );
+    }
+});
+
+// Универсальный обработчик запросов (текст и фото)
 async function handleUserQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
 
     const balance = await callGoogleSheet('get', userId, username);
     if (balance === null) {
-        return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица).');
+        return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
     }
 
     const modelKey = userModels[userId] || 'flash_3_8';
@@ -132,9 +263,10 @@ async function handleUserQuery(ctx, promptText, photoBuffer = null) {
     if (balance < selectedModel.cost) {
         return ctx.reply(
             `❌ **Недостаточно токенов!**\n\n` +
-            `🛠️ Инструмент: ${selectedModel.name}\n` +
+            `🤖 Инструмент: ${selectedModel.name}\n` +
             `📉 Требуется: ${selectedModel.cost} 🪙 | Баланс: ${balance} 🪙\n\n` +
-            `Обратитесь к администратору для пополнения баланса.`
+            `Пополните баланс в личном кабинете:`,
+            Markup.inlineKeyboard([[Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]])
         );
     }
 
@@ -164,13 +296,13 @@ async function handleUserQuery(ctx, promptText, photoBuffer = null) {
             contents: contents,
         });
 
-        const aiReply = response.text || 'Ответ от нейросети получен.';
+        const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, username, -selectedModel.cost);
 
         await ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
-        console.error('Ошибка ИИ:', error);
-        await ctx.reply('⚠️ Произошла ошибка при обращении к нейросети.');
+        console.error('Ошибка обращения к Gemini AI:', error);
+        ctx.reply('⚠️ Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
     }
 }
 
@@ -197,14 +329,21 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://ai-studio-backend-06so.onrender.com';
-app.use(bot.webhookCallback('/telegraf/webhook'));
-bot.telegram.setWebhook(`${RENDER_URL}/telegraf/webhook`);
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+if (RENDER_EXTERNAL_URL) {
+    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+    app.use(bot.webhookCallback(webhookPath));
+    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
+        console.log(`Telegram webhook успешно установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
+    });
+} else {
+    console.warn('ВНИМАНИЕ: Переменная RENDER_EXTERNAL_URL не найдена!');
+}
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Bot Server is running!');
+    res.send('AI Studio Bot Server is running with Google Sheets & YooKassa!');
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Web server is running on port ${PORT}`);
 });
