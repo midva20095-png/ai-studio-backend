@@ -14,7 +14,7 @@ const users = {};
 // Ваш актуальный ключ AQ. из Google AI Studio
 const GEMINI_API_KEY = "AQ.Ab8RN6LL4eTaqqIp5LBp-CvaoFlv4-4nd4bqGOC1ye8cg_Wvqq";
 
-// Инициализируем официальный SDK Google для работы с новыми ключами
+// Инициализируем официальный SDK Google
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Доступные модели для переключения через кнопки в виджете Tilda
@@ -64,7 +64,6 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Официальный метод генерации через SDK, который обходит ошибки блокировки ключей
             const response = await ai.models.generateContent({
                 model: user.model,
                 contents: text,
