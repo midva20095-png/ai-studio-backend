@@ -2,29 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
-const admin = require('firebase-admin');
-const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
-
-// Инициализация Firebase
-if (process.env.FIREBASE_CONFIG_JSON) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('Firebase успешно подключен через переменные окружения!');
-} else if (fs.existsSync('./firebase-key.json')) {
-    const serviceAccount = require('./firebase-key.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('Firebase успешно подключен из локального файла!');
-} else {
-    console.error('КРИТИЧЕСКАЯ ОШИБКА: Ключ Firebase не найден! База данных не будет работать.');
-}
-
-const db = admin.firestore();
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -38,6 +16,9 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
+// Твоя новая точная ссылка на веб-приложение Google Таблицы
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyq4Joa7pPtUUNESXoZtXG9YWjy0RKEvUTH8zG0mi55rtjrMsb945VrU1rY3LRt7Oiw/exec';
+
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
     'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
@@ -45,53 +26,19 @@ const MODELS = {
 
 const userModels = {};
 
-// Жесткая работа с базой данных для каждого пользователя (Личный кабинет)
-async function getOrCreateUser(userId, username = '') {
+// Функция запроса к Google Таблице
+async function callGoogleSheet(action, userId, username = '', amount = 0) {
     try {
-        const userRef = db.collection('users').doc(String(userId));
-        const doc = await userRef.get();
-        
-        if (!doc.exists) {
-            // Новый пользователь — даем стартовые 5 токенов и фиксируем в базе
-            const initialData = {
-                userId: String(userId),
-                username: username || 'unknown',
-                balance: 5,
-                created_at: new Date()
-            };
-            await userRef.set(initialData);
-            console. зарегистрирован новый пользователь: ${userId}`);
-            return 5;
-        }
-        
-        return Number(doc.data().balance) || 0;
+        const response = await axios.post(GOOGLE_SCRIPT_URL, {
+            action: action,
+            userId: String(userId),
+            username: username,
+            amount: amount
+        });
+        return response.data.balance;
     } catch (error) {
-        console.error('Ошибка работы с Firestore (getBalance):', error);
-        return 0;
-    }
-}
-
-async function updateBalance(userId, amount) {
-    try {
-        const userRef = db.collection('users').doc(String(userId));
-        const doc = await userRef.get();
-        let currentBalance = 0;
-        
-        if (doc.exists) {
-            currentBalance = Number(doc.data().balance) || 0;
-        }
-        
-        const newBalance = currentBalance + amount;
-        await userRef.set({ 
-            balance: newBalance, 
-            updated_at: new Date() 
-        }, { merge: true });
-        
-        console.log(`Баланс пользователя ${userId} изменен на ${amount}. Итог в базе: ${newBalance}`);
-        return newBalance;
-    } catch (error) {
-        console.error('Ошибка обновления баланса в базе:', error);
-        return 0;
+        console.error('Ошибка связи с Google Таблицей:', error.message);
+        return null;
     }
 }
 
@@ -156,20 +103,20 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Стартовая команда /start (Регистрация в базе + личный кабинет)
+// Старт / Регистрация в Google Таблице
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
     
-    const balance = await getOrCreateUser(userId, username);
+    const balance = await callGoogleSheet('get', userId, username);
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `👋 Добро пожаловать в личный кабинет, *${username}*!\n\n` +
-        `🆔 Ваш ID в системе: \`${userId}\`\n` +
-        `💰 Ваш баланс: *${balance} 🪙* токенов\n` +
-        `🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\n` +
-        `Вы зарегистрированы в базе данных. Выбирайте модель или пополняйте баланс:`,
+        `👋 Привет, *${username}*!\n\n` +
+        `🆔 Твой ID: \`${userId}\`\n` +
+        `💰 Баланс в таблице: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
+        `🤖 Модель: *${MODELS[currentModelKey].name}*\n\n` +
+        `Выбирай модель или пополняй баланс:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -198,13 +145,12 @@ bot.action('set_model_pro', async (ctx) => {
 bot.action('menu_buy', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
-    const balance = await getOrCreateUser(userId);
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
 
     ctx.reply(
-        `💳 *Личный кабинет и пополнение баланса*\n\n` +
-        `👤 ID: \`${userId}\`\n` +
-        `💰 Текущий баланс: *${balance} 🪙*\n\n` +
-        `Выберите пакет токенов для покупки:`,
+        `💳 *Пополнение баланса*\n\n` +
+        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n\n` +
+        `Выберите пакет токенов:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -229,12 +175,12 @@ bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generat
 bot.action('menu_main', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
-    const balance = await getOrCreateUser(userId);
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
         `🏠 Главное меню\n\n` +
-        `💰 Баланс: *${balance} 🪙*\n` +
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
         `🤖 Модель: *${MODELS[currentModelKey].name}*`,
         {
             parse_mode: 'Markdown',
@@ -247,81 +193,66 @@ bot.action('menu_main', async (ctx) => {
     );
 });
 
-// ПРОВЕРКА ОПЛАТЫ С ЗАЩИТОЙ И СОХРАНЕНИЕМ В БАЗУ
+// ПРОВЕРКА ОПЛАТЫ И ЗАЧИСЛЕНИЕ ЧЕРЕЗ ТАБЛИЦУ
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
 
-    await ctx.answerCbQuery('Проверяем платеж в системе...');
-
-    // Защита от повторного использования чека
-    const paymentRef = db.collection('processed_payments').doc(paymentId);
-    const paymentDoc = await paymentRef.get();
-
-    if (paymentDoc.exists) {
-        return ctx.reply('❌ Этот чек уже был активирован ранее! Повторно получить токены по нему нельзя.');
-    }
+    await ctx.answerCbQuery('Проверяем платеж...');
 
     const paymentInfo = await checkPaymentStatus(paymentId);
     if (!paymentInfo) {
         return ctx.reply('❌ Не удалось связаться с ЮKassa. Попробуйте позже.');
     }
 
-    // ЕСЛИ ОПЛАТИЛ УСПЕШНО
     if (paymentInfo.status === 'succeeded') {
         const coins = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
-        // Фиксируем чек в базе, чтобы сжечь его от повторного юза
-        await paymentRef.set({
-            userId: userId,
-            coins: coins,
-            used_at: new Date()
-        });
-
-        // Начисляем токены НАПРЯМУЮ В FIRESTORE
-        const newBalance = await updateBalance(userId, coins);
+        // Начисляем токены прямо в Google Таблицу
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, coins);
 
         return ctx.reply(
-            `✅ Успешная оплата!\n` +
-            `Вы купили ${coins} токенов этой херни (Сумма: ${amountPaid} руб.).\n` +
-            `🎉 Баланс в личном кабинете успешно пополнен!\n\n` +
-            `💰 Ваш текущий баланс: *${newBalance} 🪙*`,
+            `✅ Вы успешно купили ${coins} токенов (Сумма: ${amountPaid} руб.)!\n` +
+            `🎉 Баланс в Google Таблице успешно пополнен.\n` +
+            `💰 Текущий баланс: *${newBalance} 🪙*`,
             { parse_mode: 'Markdown' }
         );
-    } 
-    // ЕСЛИ НЕ ОПЛАТИЛ
-    else {
+    } else {
         return ctx.reply(
-            `❌ Вы не оплатили нихуя! Платеж не прошел или имеет статус: ${paymentInfo.status}.\n` +
-            `Деньги не списаны, токены не начислены.`
+            `❌ Платеж еще не прошел или имеет статус: ${paymentInfo.status}.\n` +
+            `Оплатите по ссылке и попробуйте снова.`
         );
     }
 });
 
-// ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (Общение с ИИ с проверкой базы)
+// ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (Общение с ИИ)
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
-    // Защита от левых типов: если пользователя нет в базе (не нажал /start), отправляем нахуй регистрироваться
-    const balance = await getOrCreateUser(userId, ctx.from.username);
+    // Проверяем баланс в таблице
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
+    if (balance === null) {
+        return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
+    }
 
     const modelKey = userModels[userId] || 'flash';
     const selectedModel = MODELS[modelKey];
 
     if (balance < selectedModel.cost) {
         return ctx.reply(
-            `❌ Недостаточно токенов в личном кабинете!\n\n` +
+            `❌ Недостаточно токенов!\n\n` +
             `🤖 Модель: ${selectedModel.name}\n` +
             `📉 Требуется: ${selectedModel.cost} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
-            `Пожалуйста, пополните баланс в личном кабинете:`,
+            `Пополните баланс в личном кабинете:`,
             Markup.inlineKeyboard([[Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]])
         );
     }
 
     try {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
@@ -329,10 +260,10 @@ bot.on('text', async (ctx) => {
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         
-        // Списываем токены прямо в базе данных Firestore
-        const newBalance = await updateBalance(userId, -selectedModel.cost);
+        // Списываем стоимость запроса в таблице
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток в ЛК: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
+        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
@@ -347,11 +278,11 @@ if (RENDER_EXTERNAL_URL) {
         console.log(`Telegram webhook успешно установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
     });
 } else {
-    console.warn('ВНИМАНИЕ: Переменная RENDER_EXTERNAL_URL не найдена. Вебхук Telegram не установлен!');
+    console.warn('ВНИМАНИЕ: Переменная RENDER_EXTERNAL_URL не найдена!');
 }
 
 app.get('/', (req, res) => {
-    res.send('Server is running with Firestore user profiles & payment check!');
+    res.send('Server is running with Google Sheets database!');
 });
 
 app.listen(PORT, () => {
