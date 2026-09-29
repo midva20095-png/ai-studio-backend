@@ -13,7 +13,7 @@ const users = {};
 // Ваш актуальный ключ AQ.
 const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";
 
-// Доступные модели для переключения кнопками
+// Доступные модели для кнопок в виджете Tilda
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -36,7 +36,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка смены модели через кнопки в виджете Tilda
+        // Обработка кликов по кнопкам смены моделей в Тилде
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -56,14 +56,13 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Используем рабочий формат запроса с вашим ключом
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
+            // Ключи AQ. передаются строго через ?key= в URL, а не через headers
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
 
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${GEMINI_API_KEY}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -89,7 +88,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Tilda Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
