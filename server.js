@@ -42,8 +42,8 @@ const handleChat = async (req, res) => {
       return res.status(400).json({ reply: 'Ошибка: Сообщение не передано или пустое.' });
     }
 
-    // Обращаемся к Gemini 2.5 Flash
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    // Перешли на актуальную модель gemini-3.8-flash
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
     const result = await model.generateContent(userMessage.trim());
     const response = await result.response;
     const text = response.text();
@@ -51,7 +51,6 @@ const handleChat = async (req, res) => {
     return res.json({ reply: text });
   } catch (error) {
     console.error('Детали ошибки Gemini API:', error);
-    // Возвращаем точную причину ошибки прямо в чат
     return res.status(500).json({ 
       reply: `Ошибка API: ${error.message || 'Неизвестная ошибка на сервере'}`
     });
