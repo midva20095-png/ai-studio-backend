@@ -10,7 +10,7 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ
+// Ваш рабочий ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
 
 // Доступные модели для переключения из виджета
@@ -25,7 +25,8 @@ wss.on('connection', (ws, req) => {
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
+        // По умолчанию ставим самую стабильную 1.5-flash для гарантии ответа
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-1.5-flash" };
     } else {
         users[clientId].ws = ws;
     }
@@ -56,24 +57,33 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Передаем ключ через URL параметром ?key=, так как для AQ-ключей это самый надежный метод обхода OAuth-ошибок
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
+            // Функция отправки запроса с вашими рабочими заголовками
+            const sendRequest = async (modelName) => {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-goog-api-key': GEMINI_API_KEY
+                    },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: text }] }]
+                    })
+                });
+                return await response.json();
+            };
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
-            });
+            // Делаем запрос для выбранной пользователем модели
+            let data = await sendRequest(user.model);
 
-            const data = await response.json();
-            
+            // Если модель вернула ошибку и это была не 1.5-flash, страхуем стабильной версией
+            if (data.error && user.model !== "gemini-1.5-flash") {
+                console.warn(`Модель ${user.model} сбоит, переключаемся на gemini-1.5-flash...`);
+                data = await sendRequest("gemini-1.5-flash");
+            }
+
             if (data.error) {
                 console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
                 return;
             }
 
