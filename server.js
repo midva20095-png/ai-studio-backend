@@ -4,7 +4,7 @@ const { GoogleGenAI } = require('@google/genai');
 const app = express();
 app.use(express.json());
 
-// Разрешаем запросы с любых сайтов (включая Тилду)
+// Разрешаем CORS для Тилды
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -15,9 +15,10 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ваш точный ключ API
 const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-const MODEL_NAME = "gemini-3.8-flash";
+const MODEL_NAME = "gemini-2.5-flash"; // Актуальная стабильная модель для SDK
 
 app.post('/chat', async (req, res) => {
     const { message } = req.body;
