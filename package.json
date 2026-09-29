@@ -1,1 +1,13 @@
-npm install @google/genai
+{
+  "name": "ai-studio-backend",
+  "version": "1.0.0",
+  "description": "AI Chat Backend for Tilda",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.16.0"
+  }
+}
