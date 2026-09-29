@@ -19,10 +19,9 @@ const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
-// Все доступные модели
 const MODELS = {
-    'flash': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', cost: 1, desc: 'Быстрая и легкая модель' },
-    'pro': { name: '🧠 Nano Banana Pro (Gemini 3.1 Pro)', modelId: 'gemini-3.1-pro-preview', cost: 5, desc: 'Продвинутая премиум-модель' }
+    'flash': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro (Gemini 3.1 Pro)', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
 const userModels = {};
@@ -42,7 +41,6 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// Красивое главное меню в чате с выбором моделей и кнопкой Mini App
 async function sendMainMenu(ctx, edit = false) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -74,7 +72,6 @@ async function sendMainMenu(ctx, edit = false) {
 }
 
 bot.start(async (ctx) => {
-    // Устанавливаем кнопку меню в интерфейсе Telegram
     try {
         const webAppUrl = process.env.RENDER_EXTERNAL_URL || '';
         await ctx.telegram.setChatMenuButton({
@@ -85,9 +82,7 @@ bot.start(async (ctx) => {
                 web_app: { url: webAppUrl }
             }
         });
-    } catch (e) {
-        console.error('Ошибка установки меню:', e);
-    }
+    } catch (e) {}
 
     await sendMainMenu(ctx, false);
 });
@@ -103,17 +98,16 @@ bot.action('refresh_menu', async (ctx) => {
 
 bot.action('set_flash', async (ctx) => {
     userModels[ctx.from.id] = 'flash';
-    await ctx.answerCbQuery('Успешно! Выбрана модель Flash');
+    await ctx.answerCbQuery('Выбрана модель Flash');
     await sendMainMenu(ctx, true);
 });
 
 bot.action('set_pro', async (ctx) => {
     userModels[ctx.from.id] = 'pro';
-    await ctx.answerCbQuery('Успешно! Выбрана модель Nano Banana Pro');
+    await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
     await sendMainMenu(ctx, true);
 });
 
-// Обработка запросов к ИИ
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -122,7 +116,7 @@ bot.on('text', async (ctx) => {
 
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
-        return ctx.reply('❌ Ошибка связи с базой данных. Попробуйте позже.');
+        return ctx.reply('❌ Ошибка связи с базой данных.');
     }
 
     const modelKey = userModels[userId] || 'flash';
@@ -155,7 +149,6 @@ bot.on('text', async (ctx) => {
         const aiReply = response.text || 'Пустой ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        // Отправляем чистый ответ без простыней кнопок, чтобы не ломать верстку телефона
         await ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error('Ошибка AI:', error);
@@ -163,7 +156,6 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// API для Mini App
 app.post('/api/get-user', async (req, res) => {
     const { userId, username } = req.body;
     const balance = await callGoogleSheet('get', userId, username || 'User');
