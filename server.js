@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// Логирование критических ошибок сервера
+// Отлавливаем критические ошибки
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
 });
@@ -17,51 +17,55 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-// Инициализация Google Generative AI
+// Инициализация Gemini API
 const apiKey = process.env.GEMINI_API_KEY;
 let genAI = null;
 
 if (apiKey) {
-  genAI = new GoogleGenerativeAI(apiKey);
+  genAI = new GoogleGenerativeAI(apiKey.trim());
 } else {
-  console.warn('ВНИМАНИЕ: Переменная GEMINI_API_KEY не найдена в окружении!');
+  console.warn('ВНИМАНИЕ: GEMINI_API_KEY не задан в переменной окружения!');
 }
 
-// Проверка статуса сервера
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// Основной эндпоинт чата
-app.post('/chat', async (req, res) => {
+// Поддерживаем обработку запросов как на /chat, так и на /api/chat
+const handleChat = async (req, res) => {
   try {
     if (!genAI) {
-      return res.status(500).json({ error: 'Сервер не настроен: отсутствует GEMINI_API_KEY.' });
+      return res.status(500).json({ 
+        error: 'Сервер не настроен: отсутствует GEMINI_API_KEY в Environment Variables.' 
+      });
     }
 
     const { message, prompt } = req.body;
     const userMessage = message || prompt;
 
-    if (!userMessage) {
-      return res.status(400).json({ error: 'Сообщение не передано.' });
+    if (!userMessage || typeof userMessage !== 'string' || userMessage.trim() === '') {
+      return res.status(400).json({ error: 'Сообщение не передано или пустое.' });
     }
 
-    // Запрос к модели Gemini
+    // Запрос к актуальной модели Gemini 2.5 Flash
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(userMessage);
+    const result = await model.generateContent(userMessage.trim());
     const response = await result.response;
     const text = response.text();
 
-    res.json({ reply: text, text: text, response: text });
+    return res.json({ reply: text, text: text });
   } catch (error) {
-    console.error('Ошибка Gemini API:', error);
-    res.status(500).json({ 
+    console.error('Ошибка при вызове Gemini API:', error);
+    return res.status(500).json({ 
       error: 'Ошибка обработки запроса на сервере.', 
-      details: error.message 
+      details: error.message || String(error)
     });
   }
-});
+};
 
-app.listen(PORT, () => {
+app.post('/chat', handleChat);
+app.post('/api/chat', handleChat);
+
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
 });
