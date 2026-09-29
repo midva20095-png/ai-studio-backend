@@ -3,25 +3,21 @@ const cors = require('cors');
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const { GoogleGenAI } = require('@google/genai');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
 const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
 const bot = new Telegraf(BOT_TOKEN);
 
-const YUKASSA_SHOP_ID = '1120841';
-const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro (Gemini 3.1 Pro)', modelId: 'gemini-3.1-pro-preview', cost: 5 }
+    'pro': { name: '🧠 Nano Banana Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
 const userModels = {};
@@ -46,19 +42,17 @@ async function sendMainMenu(ctx, edit = false) {
     const username = ctx.from.username || ctx.from.first_name || 'User';
     const balance = await callGoogleSheet('get', userId, username);
     const modelKey = userModels[userId] || 'flash';
-    const webAppUrl = process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}` : '';
 
     const text = 
-        `🤖 **AI Studio Control Hub**\n\n` +
-        `👤 Юзер: *${username}*\n` +
+        `🤖 **AI Studio Bot**\n\n` +
+        `👤 Пользователь: *${username}*\n` +
         `💰 Баланс: *${balance !== null ? balance : '0'} 🪙*\n` +
-        `⚙️ Текущая модель: *${MODELS[modelKey].name}*\n\n` +
-        `Выбирай модель кнопками ниже или открывай Mini App для пополнения:`;
+        `⚙️ Модель: *${MODELS[modelKey].name}*\n\n` +
+        `Выберите модель или отправьте сообщение для генерации:`;
 
     const keyboard = Markup.inlineKeyboard([
-        [Markup.button.webApp('💎 Открыть Личный Кабинет (Mini App)', webAppUrl)],
-        [Markup.button.callback('⚡ Выбрать Flash (1 токен)', 'set_flash')],
-        [Markup.button.callback('🧠 Выбрать Nano Banana Pro (5 токенов)', 'set_pro')],
+        [Markup.button.callback('⚡ Flash (1 токен)', 'set_flash')],
+        [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_pro')],
         [Markup.button.callback('🔄 Обновить баланс', 'refresh_menu')]
     ]);
 
@@ -72,18 +66,6 @@ async function sendMainMenu(ctx, edit = false) {
 }
 
 bot.start(async (ctx) => {
-    try {
-        const webAppUrl = process.env.RENDER_EXTERNAL_URL || '';
-        await ctx.telegram.setChatMenuButton({
-            chat_id: ctx.chat.id,
-            menu_button: {
-                type: 'web_app',
-                text: '💼 Кабинет',
-                web_app: { url: webAppUrl }
-            }
-        });
-    } catch (e) {}
-
     await sendMainMenu(ctx, false);
 });
 
@@ -116,24 +98,18 @@ bot.on('text', async (ctx) => {
 
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
-        return ctx.reply('❌ Ошибка связи с базой данных.');
+        return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица).');
     }
 
     const modelKey = userModels[userId] || 'flash';
     const selectedModel = MODELS[modelKey];
 
     if (balance < selectedModel.cost) {
-        const webAppUrl = process.env.RENDER_EXTERNAL_URL || '';
         return ctx.reply(
             `❌ **Недостаточно токенов!**\n\n` +
             `🤖 Модель: ${selectedModel.name}\n` +
-            `📉 Требуется: ${selectedModel.cost} 🪙 | Баланс: ${balance} 🪙`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.webApp('💳 Пополнить в Mini App', webAppUrl)]
-                ])
-            }
+            `📉 Требуется: ${selectedModel.cost} 🪙 | Баланс: ${balance} 🪙\n\n` +
+            `Обратитесь к администратору для пополнения баланса.`
         );
     }
 
@@ -156,45 +132,9 @@ bot.on('text', async (ctx) => {
     }
 });
 
-app.post('/api/get-user', async (req, res) => {
-    const { userId, username } = req.body;
-    const balance = await callGoogleSheet('get', userId, username || 'User');
-    res.json({ balance: balance !== null ? balance : 0 });
+app.get('/', (req, res) => {
+    res.send('Bot is running!');
 });
-
-app.post('/api/create-invoice', async (req, res) => {
-    const { userId, amountRub, coinsCount } = req.body;
-    const url = 'https://api.yookassa.ru/v3/payments';
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    
-    const body = {
-        amount: { value: `${amountRub}.00`, currency: 'RUB' },
-        confirmation: { type: 'redirect', return_url: process.env.RENDER_EXTERNAL_URL },
-        capture: true,
-        description: `Покупка ${coinsCount} токенов`,
-        metadata: { user_id: String(userId), coins: String(coinsCount) }
-    };
-
-    try {
-        const response = await axios.post(url, body, {
-            headers: {
-                'Authorization': `Basic ${authString}`,
-                'Content-Type': 'application/json',
-                'Idempotence-Key': Math.random().toString(36).substring(7)
-            }
-        });
-        res.json({ confirmationUrl: response.data.confirmation.confirmation_url, paymentId: response.data.id });
-    } catch (error) {
-        res.status(500).json({ error: 'Payment creation failed' });
-    }
-});
-
-const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
-if (RENDER_EXTERNAL_URL) {
-    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-    app.use(bot.webhookCallback(webhookPath));
-    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`);
-}
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
