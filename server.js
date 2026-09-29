@@ -1,6 +1,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -10,8 +11,17 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш API-ключ
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KLi2evYUWy-k5spZcT3H9URzBfjm1GRYQrd1xc06JIJQ";
+// 1. Инициализация официального клиента Google Gemini SDK с вашим ключом
+const apiKey = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KLi2evYUWy-k5spZcT3H9URzBfjm1GRYQrd1xc06JIJQ";
+
+const ai = new GoogleGenAI({
+  apiKey: apiKey,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
@@ -29,18 +39,21 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        if (user.coins <= 0) {
-            ws.send("⚠️ У вас закончились монеты. Пополните баланс!");
-            return;
-        }
-
-        user.coins -= 1;
-        ws.send(`COINS_UPDATE:${user.coins}`);
-
-        // Определение типа запроса: генерация изображения или текст
+        // Проверяем тип запроса для расчета стоимости в монетах
         const isImageRequest = text.toLowerCase().startsWith('/img') || 
                                text.toLowerCase().startsWith('нарисуй') || 
                                text.toLowerCase().startsWith('/нарисуй');
+
+        const cost = isImageRequest ? 5 : 1;
+
+        if (user.coins < cost) {
+            ws.send(`⚠️ Недостаточно монет. Требуется: ${cost} 🪙, у вас: ${user.coins} 🪙. Пополните баланс!`);
+            return;
+        }
+
+        // Списываем монеты
+        user.coins -= cost;
+        ws.send(`COINS_UPDATE:${user.coins}`);
 
         if (isImageRequest) {
             ws.send("🎨 Генерирую изображение...");
@@ -53,67 +66,44 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// Запрос текста
+// 2. Генерация текста (Gemini Flash)
 async function generateText(ws, textPrompt) {
     try {
-        const response = await fetch(
-            'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: textPrompt }] }]
-                })
-            }
-        );
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [{ role: 'user', parts: [{ text: textPrompt }] }],
+            config: {
+                systemInstruction: 'Ты — мудрый и полезный AI-помощник. Отвечай на русском языке.',
+                temperature: 0.7,
+            },
+        });
 
-        const data = await response.json();
-
-        if (data.error) {
-            console.error("Gemini API Error:", data.error);
-            ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
-            return;
-        }
-
-        const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+        const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
         ws.send(aiReply);
 
     } catch (error) {
-        console.error("Fetch Error:", error);
-        ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+        console.error("Ошибка вызова Gemini:", error);
+        ws.send(`❌ Ошибка API: ${error.message || 'Не удалось обработать запрос'}`);
     }
 }
 
-// Запрос генерации картинки (Imagen 3)
+// 3. Генерация изображений (Gemini Image / Imagen)
 async function generateImage(ws, prompt) {
     try {
-        const response = await fetch(
-            'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
-                },
-                body: JSON.stringify({
-                    instances: [{ prompt: prompt }],
-                    parameters: { sampleCount: 1, aspectRatio: "1:1" }
-                })
-            }
-        );
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [
+                    { text: `High quality detailed digital art illustration of: ${prompt}` }
+                ],
+            },
+            config: {
+                responseModalities: ['IMAGE'],
+            },
+        });
 
-        const data = await response.json();
+        const base64Image = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
-        if (data.error) {
-            console.error("Imagen API Error:", data.error);
-            ws.send(`❌ Ошибка генерации картинки: ${data.error.message || 'Не удалось создать изображение'}`);
-            return;
-        }
-
-        const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
         if (base64Image) {
             ws.send(`IMAGE_URL:data:image/png;base64,${base64Image}`);
         } else {
@@ -121,8 +111,8 @@ async function generateImage(ws, prompt) {
         }
 
     } catch (error) {
-        console.error("Image Fetch Error:", error);
-        ws.send("❌ Произошла ошибка при запросе генерации картинки.");
+        console.error("Ошибка генерации картинки:", error);
+        ws.send(`❌ Ошибка генерации картинки: ${error.message || 'Не удалось создать изображение'}`);
     }
 }
 
