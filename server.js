@@ -1,95 +1,63 @@
 const express = require('express');
-const { WebSocketServer } = require('ws');
-const http = require('http');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-const users = {};
+// Ваш новый ключ
+const GEMINI_API_KEY = "AQ.Ab8RN6KfdaHQ_v1_rheuubC-nDQECRiG_mfRq2oG9KLhn6Labw";
 
-// Ваш ключ/токен
-const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
+// Простой HTTP POST эндпоинт
+app.post('/api/chat', async (req, res) => {
+    const { message, model } = req.body;
 
-// Доступные модели для переключения из виджета
-const AVAILABLE_MODELS = {
-    "flash": "gemini-1.5-flash",
-    "flash2": "gemini-2.0-flash",
-    "flash-latest": "gemini-flash-latest"
-};
-
-wss.on('connection', (ws, req) => {
-    const urlParts = req.url.split('/');
-    const clientId = urlParts[urlParts.length - 1];
-
-    if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
-    } else {
-        users[clientId].ws = ws;
+    if (!message) {
+        return res.status(400).json({ error: "Сообщение не должно быть пустым" });
     }
 
-    ws.send(`COINS_UPDATE:${users[clientId].coins}`);
+    const selectedModel = model || "gemini-1.5-flash";
 
-    ws.on('message', async (message) => {
-        const text = message.toString().trim();
-        const user = users[clientId];
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${GEMINI_API_KEY}`;
 
-        // Обработка переключения моделей с кнопок Тилды
-        if (text.startsWith("SET_MODEL:")) {
-            const modelKey = text.split(":")[1];
-            if (AVAILABLE_MODELS[modelKey]) {
-                user.model = AVAILABLE_MODELS[modelKey];
-                ws.send(`MODEL_UPDATED:${user.model}`);
-            }
-            return;
-        }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contents: [
+                    {
+                        parts: [{ text: message }]
+                    }
+                ]
+            })
+        });
 
-        if (user.coins <= 0) {
-            ws.send("⚠️ У вас закончились монеты. Пополните баланс!");
-            return;
-        }
+        const data = await response.json();
 
-        user.coins -= 1;
-        ws.send(`COINS_UPDATE:${user.coins}`);
-        ws.send("⏳ Думаю над ответом...");
-
-        try {
-            // Передаем токен через Bearer аутентификацию, как требует Google для OAuth-креденшелов
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${GEMINI_API_KEY}`
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
+        if (data.error) {
+            console.error("Google API Error:", data.error);
+            return res.status(data.error.code || 500).json({ 
+                error: data.error.message || "Ошибка на стороне Google API" 
             });
-
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                return;
-            }
-
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
-            ws.send(aiReply);
-            
-        } catch (error) {
-            console.error("Fetch Error:", error);
-            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
         }
-    });
+
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Пустой ответ от нейросети.";
+        return res.json({ reply });
+
+    } catch (err) {
+        console.error("Server Error:", err);
+        return res.status(500).json({ error: "Внутренняя ошибка сервера" });
+    }
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Backend (HTTP REST) is running!');
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });
