@@ -15,7 +15,6 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
-// Полный каталог моделей с рыночными ценами в рублях
 const MODELS = {
     'pro_3_1': { name: '🧠 Gemini 3.1 Pro (Thinking)', modelId: 'gemini-2.5-pro', cost: 25 },
     'flash_3_8': { name: '⚡ Gemini 3.8 / 3.5 Flash', modelId: 'gemini-2.5-flash', cost: 12 },
@@ -42,7 +41,6 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// Главное меню в виде аккуратной сетки кнопок (как на твоем примере)
 async function sendMainMenu(ctx, edit = false) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -76,7 +74,13 @@ async function sendMainMenu(ctx, edit = false) {
 
     try {
         if (edit && ctx.callbackQuery) {
-            return ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
+            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }).catch((err) => {
+                // Игнорируем ошибку, если текст сообщения не изменился
+                if (!err.description?.includes('message is not modified')) {
+                    console.error('Ошибка редактирования сообщения:', err);
+                }
+            });
+            return;
         }
     } catch (e) {}
 
@@ -92,11 +96,10 @@ bot.command('menu', async (ctx) => {
 });
 
 bot.action('refresh_menu', async (ctx) => {
-    await ctx.answerCbQuery('Меню обновлено');
+    await ctx.answerCbQuery('Баланс проверен!');
     await sendMainMenu(ctx, true);
 });
 
-// Назначение моделей через кнопки
 const modelActions = {
     'set_flash_3_8': 'flash_3_8',
     'set_pro_3_1': 'pro_3_1',
@@ -114,7 +117,6 @@ for (const [actionName, modelKey] of Object.entries(modelActions)) {
     });
 }
 
-// Универсальная функция обработки текста и картинок
 async function handleUserQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -195,7 +197,6 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// Настройка вебхука для Render
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://ai-studio-backend-06so.onrender.com';
 app.use(bot.webhookCallback('/telegraf/webhook'));
 bot.telegram.setWebhook(`${RENDER_URL}/telegraf/webhook`);
