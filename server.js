@@ -3,15 +3,12 @@ const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-
-// Render автоматически передает PORT через process.env.PORT
 const PORT = process.env.PORT || 10000;
 
-// Разрешаем CORS-запросы
 app.use(cors());
 app.use(express.json());
 
-// Отлавливаем критические ошибки, чтобы процесс не завершался аварийно
+// Логирование критических ошибок сервера
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
 });
@@ -20,49 +17,51 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-// Инициализируем клиент Gemini
+// Инициализация Google Generative AI
+const apiKey = process.env.GEMINI_API_KEY;
 let genAI = null;
-if (process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+if (apiKey) {
+  genAI = new GoogleGenerativeAI(apiKey);
 } else {
-  console.warn('ВНИМАНИЕ: Переменная GEMINI_API_KEY не задана в Environment!');
+  console.warn('ВНИМАНИЕ: Переменная GEMINI_API_KEY не найдена в окружении!');
 }
 
-// Проверка работоспособности (Healthcheck для Render)
+// Проверка статуса сервера
 app.get('/', (req, res) => {
-  res.status(200).send('AI Backend is active and running.');
+  res.send('Server is running');
 });
 
-// Эндпоинт для чата
-app.post('/api/chat', async (req, res) => {
+// Основной эндпоинт чата
+app.post('/chat', async (req, res) => {
   try {
     if (!genAI) {
-      return res.status(500).json({ 
-        error: 'Сервер не настроен: отсутствует GEMINI_API_KEY.' 
-      });
+      return res.status(500).json({ error: 'Сервер не настроен: отсутствует GEMINI_API_KEY.' });
     }
 
-    const { message } = req.body;
-    if (!message || message.trim() === '') {
-      return res.status(400).json({ error: 'Сообщение не должно быть пустым.' });
+    const { message, prompt } = req.body;
+    const userMessage = message || prompt;
+
+    if (!userMessage) {
+      return res.status(400).json({ error: 'Сообщение не передано.' });
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(message);
+    // Запрос к модели Gemini
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const result = await model.generateContent(userMessage);
     const response = await result.response;
     const text = response.text();
 
-    return res.json({ reply: text });
+    res.json({ reply: text, text: text, response: text });
   } catch (error) {
-    console.error('Ошибка при вызове Gemini API:', error);
-    return res.status(500).json({ 
-      error: 'Ошибка обработки запроса на сервере.',
+    console.error('Ошибка Gemini API:', error);
+    res.status(500).json({ 
+      error: 'Ошибка обработки запроса на сервере.', 
       details: error.message 
     });
   }
 });
 
-// Обязательно слушаем хост 0.0.0.0 для Cloud-сервисов
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
