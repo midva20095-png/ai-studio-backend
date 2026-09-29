@@ -10,8 +10,8 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ
-const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
+// Ваш новый актуальный ключ
+const GEMINI_API_KEY = "AQ.Ab8RN6LL4eTAqqLp5LBp-CvaoFlv4_4nd4bqGOC1ye8cg_Wvqg";
 
 // Доступные модели для переключения из виджета
 const AVAILABLE_MODELS = {
