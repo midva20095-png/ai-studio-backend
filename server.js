@@ -13,7 +13,7 @@ const users = {};
 // Ваш актуальный ключ AQ.
 const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";
 
-// Доступные модели для кнопок в виджете Tilda
+// Доступные модели
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -22,7 +22,7 @@ const AVAILABLE_MODELS = {
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
-    const clientId = urlParts[urlParts.length - 1];
+    const clientId = urlParts[urlParts.length - 1] || 'default-user';
 
     if (!users[clientId]) {
         users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
@@ -36,7 +36,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка кликов по кнопкам смены моделей в Тилде
+        // Обработка смены модели
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -56,7 +56,6 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Ключи AQ. передаются строго через ?key= в URL, а не через headers
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
 
             const response = await fetch(url, {
