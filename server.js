@@ -16,8 +16,8 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Твоя новая точная ссылка на веб-приложение Google Таблицы
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxCOjFFQPjmqu0SN4cWMui1aTxE_dsaUC-7L95EDalVib2erzJNB6TaAklzPPglwcuy/exec';
+// Твоя самая свежая ссылка на веб-приложение Google Apps Script
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
@@ -26,7 +26,6 @@ const MODELS = {
 
 const userModels = {};
 
-// Функция запроса к Google Таблице
 async function callGoogleSheet(action, userId, username = '', amount = 0) {
     try {
         const response = await axios.post(GOOGLE_SCRIPT_URL, {
@@ -42,7 +41,6 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// Генерация ссылки на оплату
 async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -73,7 +71,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
             `💳 Ссылка на оплату создана!\n\n` +
             `💵 Сумма: ${amountRub} руб.\n` +
             `🪙 Токенов к зачислению: ${coinsCount}\n\n` +
-            `⚠️ *Оплатите по ссылке, а затем нажмите кнопку «🔄 Проверить оплату»:*`,
+            `⚠️ Оплатите по ссылке, а затем нажмите кнопку «🔄 Проверить оплату»:`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
@@ -103,7 +101,6 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Старт / Регистрация в Google Таблице
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -112,10 +109,10 @@ bot.start(async (ctx) => {
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `👋 Привет, *${username}*!\n\n` +
-        `🆔 Твой ID: \`${userId}\`\n` +
-        `💰 Баланс в таблице: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
-        `🤖 Модель: *${MODELS[currentModelKey].name}*\n\n` +
+        `👋 Привет, ${username}!\n\n` +
+        `🆔 Твой ID: ${userId}\n` +
+        `💰 Баланс в таблице: ${balance !== null ? balance : 'ошибка'} 🪙\n` +
+        `🤖 Модель: ${MODELS[currentModelKey].name}\n\n` +
         `Выбирай модель или пополняй баланс:`,
         {
             parse_mode: 'Markdown',
@@ -132,14 +129,14 @@ bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
     await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Активна модель **Gemini 3.8 Flash**.');
+    ctx.reply('✅ Активна модель Gemini 3.8 Flash.');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
     await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Активна премиум-модель **Nano Banana Pro**.');
+    ctx.reply('🧠 Активна премиум-модель Nano Banana Pro.');
 });
 
 bot.action('menu_buy', async (ctx) => {
@@ -148,8 +145,8 @@ bot.action('menu_buy', async (ctx) => {
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
 
     ctx.reply(
-        `💳 *Пополнение баланса*\n\n` +
-        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n\n` +
+        `💳 Пополнение баланса\n\n` +
+        `💰 Твой текущий баланс: ${balance !== null ? balance : 'ошибка'} 🪙\n\n` +
         `Выберите пакет токенов:`,
         {
             parse_mode: 'Markdown',
@@ -164,7 +161,6 @@ bot.action('menu_buy', async (ctx) => {
     );
 });
 
-// Кнопки пополнения
 bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
 bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50, 10); });
 bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
@@ -180,8 +176,8 @@ bot.action('menu_main', async (ctx) => {
     
     ctx.reply(
         `🏠 Главное меню\n\n` +
-        `💰 Баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
-        `🤖 Модель: *${MODELS[currentModelKey].name}*`,
+        `💰 Баланс: ${balance !== null ? balance : 'ошибка'} 🪙\n` +
+        `🤖 Модель: ${MODELS[currentModelKey].name}`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -193,7 +189,6 @@ bot.action('menu_main', async (ctx) => {
     );
 });
 
-// ПРОВЕРКА ОПЛАТЫ И ЗАЧИСЛЕНИЕ ЧЕРЕЗ ТАБЛИЦУ
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
@@ -209,13 +204,12 @@ bot.action(/^check_(.+)$/, async (ctx) => {
         const coins = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
-        // Начисляем токены прямо в Google Таблицу
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, coins);
 
         return ctx.reply(
             `✅ Вы успешно купили ${coins} токенов (Сумма: ${amountPaid} руб.)!\n` +
             `🎉 Баланс в Google Таблице успешно пополнен.\n` +
-            `💰 Текущий баланс: *${newBalance} 🪙*`,
+            `💰 Текущий баланс: ${newBalance} 🪙`,
             { parse_mode: 'Markdown' }
         );
     } else {
@@ -226,12 +220,10 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (Общение с ИИ)
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
-    // Проверяем баланс в таблице
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
@@ -260,10 +252,9 @@ bot.on('text', async (ctx) => {
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         
-        // Списываем стоимость запроса в таблице
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
+        ctx.reply(`${aiReply}\n\n(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)`);
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
