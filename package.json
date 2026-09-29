@@ -1,17 +1,7 @@
-{
-  "name": "ai-studio-backend",
-  "version": "1.0.0",
-  "description": "Telegram bot and web backend with YooKassa, Firebase and Gemini AI",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "@google/genai": "^2.24.0",
-    "axios": "^1.7.4",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "firebase-admin": "^12.1.0",
-    "telegraf": "^4.16.3"
-  }
-}
+from google import genai
+client = genai.Client(api_key="YOUR_API_KEY")
+interaction = client.interactions.create(
+    model="gemini-3.8-flash",
+    input="Explain how AI works in a few words"
+)
+print(interaction.output_text)
