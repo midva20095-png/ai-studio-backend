@@ -14,7 +14,7 @@ if (fs.existsSync('./firebase-key.json')) {
     });
     console.log('Firebase успешно подключен!');
 } else {
-    console.warn('ВНИМАНИЕ: Файл firebase-key.json не найден!');
+    console.warn('ВНИМАНИЕ: Файл firebase-key.json не найден! Проверьте наличие ключа в корне проекта.');
 }
 
 const db = admin.firestore();
@@ -34,13 +34,13 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Словарь моделей и стоимости в монетах
+// Актуальные эндпоинты моделей из официальной документации
 const MODELS = {
-    'flash': { name: '⚡ Gemini Flash (Быстрая)', modelId: 'gemini-2.0-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro / Gemini Pro', modelId: 'gemini-2.5-pro', cost: 5 }
+    'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
-// Хранение выбранной модели для каждого пользователя в памяти (или можно сохранять в Firestore)
+// Хранение выбранной модели для каждого пользователя в памяти
 const userModels = {};
 
 // Работа с балансом через Firestore
@@ -52,10 +52,10 @@ async function getBalance(userId) {
             await userRef.set({ balance: 5, created_at: new Date() });
             return 5;
         }
-        return doc.data().balance || 0;
+        return Number(doc.data().balance) || 0;
     } catch (error) {
         console.error('Ошибка чтения баланса:', error);
-        return 5;
+        return 0;
     }
 }
 
@@ -63,9 +63,9 @@ async function updateBalance(userId, amount) {
     try {
         const userRef = db.collection('users').doc(String(userId));
         const doc = await userRef.get();
-        let currentBalance = 5;
+        let currentBalance = 0;
         if (doc.exists) {
-            currentBalance = doc.data().balance || 0;
+            currentBalance = Number(doc.data().balance) || 0;
         }
         const newBalance = currentBalance + amount;
         await userRef.set({ balance: newBalance, updated_at: new Date() }, { merge: true });
@@ -76,7 +76,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Создание платежа ЮKassa (1 монета = 5 рублей, значит 100 монет = 500 руб, или подстроим под твои пакеты)
+// Универсальная функция создания платежа ЮKassa на любую сумму
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -104,20 +104,30 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
     }
 }
 
+// Главная клавиатура выбора пополнения (от 50 до 5000 руб)
+function getTopUpKeyboard() {
+    return Markup.inlineKeyboard([
+        [Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50'), Markup.button.callback('💳 200 руб. (40 монет)', 'buy_200')],
+        [Markup.button.callback('💳 500 руб. (100 монет)', 'buy_500'), Markup.button.callback('💳 1000 руб. (200 монет)', 'buy_1000')],
+        [Markup.button.callback('🚀 5000 руб. (1000 монет)', 'buy_5000')],
+        [Markup.button.callback('🔙 Назад в меню', 'back_to_main')]
+    ]);
+}
+
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const balance = await getBalance(userId);
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `Привет! Я твой продвинутый ИИ-помощник.\n` +
-        `Твой баланс: ${balance} 🪙\n` +
-        `Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы))\n\n` +
-        `Выбери модель или просто напиши мне вопрос:`,
+        `Привет! Я твой продвинутый ИИ-помощник с поддержкой моделей Gemini.\n\n` +
+        `💰 Твой баланс: ${balance} 🪙 (1 монета = 5 руб)\n` +
+        `🤖 Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы) за запрос)\n\n` +
+        `Выбери нужную модель или пополни баланс:`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini Flash (1 монета)', 'set_model_flash')],
+            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
             [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
-            [Markup.button.callback('💳 Купить 20 монет (100 руб)', 'buy_100')]
+            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
         ])
     );
 });
@@ -125,51 +135,86 @@ bot.start(async (ctx) => {
 bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
-    await ctx.answerCbQuery('Выбрана модель Flash (1 монета за запрос)');
-    ctx.reply('✅ Успешно! Теперь активна модель **Gemini Flash** (списание: 1 монета за запрос).');
+    await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
+    ctx.reply('✅ Успешно! Теперь активна модель **Gemini 3.8 Flash** (списание: 1 монета / 5 рублей за запрос).');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
-    await ctx.answerCbQuery('Выбрана модель Pro / Nano Banana Pro (5 монет)');
-    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro** (списание: 5 монет за запрос).');
+    await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
+    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro / Gemini 3.1 Pro** (списание: 5 монет / 25 рублей за запрос).');
 });
 
-bot.action('buy_100', async (ctx) => {
-    const userId = ctx.from.id;
+bot.action('menu_buy', async (ctx) => {
     await ctx.answerCbQuery();
-    // 20 монет по 5 рублей = 100 рублей (или настрой под свои объемы)
-    const paymentUrl = await createYooKassaPayment(userId, 20, 100);
-    if (paymentUrl) {
-        ctx.reply(
-            `Ссылка на оплату сформирована (20 монет = 100 руб): 🎉`,
-            Markup.inlineKeyboard([[Markup.button.url('🔗 Оплатить 100 руб.', paymentUrl)]])
-        );
-    } else {
-        ctx.reply('Ошибка создания платежа.');
-    }
+    ctx.reply('Выберите сумму пополнения баланса:', getTopUpKeyboard());
 });
 
-// Обработка текстовых сообщений с учетом выбранной модели и стоимости
-bot.on('text', async (ctx) => {
+bot.action('back_to_main', async (ctx) => {
+    await ctx.answerCbQuery();
     const userId = ctx.from.id;
     const balance = await getBalance(userId);
+    const currentModelKey = userModels[userId] || 'flash';
+    ctx.reply(
+        `💰 Твой баланс: ${balance} 🪙\n🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\nВыбери модель или пополни баланс:`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
+            [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
+            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
+        ])
+    );
+});
+
+// Обработчики кнопок пополнения на разную сумму
+const tariffs = [
+    { action: 'buy_50', coins: 10, price: 50 },
+    { action: 'buy_200', coins: 40, price: 200 },
+    { action: 'buy_500', coins: 100, price: 500 },
+    { action: 'buy_1000', coins: 200, price: 1000 },
+    { action: 'buy_5000', coins: 1000, price: 5000 }
+];
+
+tariffs.forEach(tariff => {
+    bot.action(tariff.action, async (ctx) => {
+        const userId = ctx.from.id;
+        await ctx.answerCbQuery();
+        const paymentUrl = await createYooKassaPayment(userId, tariff.coins, tariff.price);
+        if (paymentUrl) {
+            ctx.reply(
+                `💳 Ссылка на оплату пакета (${tariff.coins} монет за ${tariff.price} руб) сформирована:`,
+                Markup.inlineKeyboard([[Markup.button.url(`🔗 Оплатить ${tariff.price} руб.`, paymentUrl)]])
+            );
+        } else {
+            ctx.reply('Ошибка создания платежа. Попробуйте позже.');
+        }
+    });
+});
+
+// Обработка текстовых сообщений со строгой проверкой баланса
+bot.on('text', async (ctx) => {
+    const userId = ctx.from.id;
     const text = ctx.message.text;
 
     const modelKey = userModels[userId] || 'flash';
     const selectedModel = MODELS[modelKey];
 
+    // Жестко запрашиваем актуальный баланс из базы прямо перед отправкой
+    const balance = await getBalance(userId);
+
     if (balance < selectedModel.cost) {
-        ctx.reply(
-            `Недостаточно монет! 🪙 Для модели ${selectedModel.name} нужно ${selectedModel.cost} монета(ы). Твой баланс: ${balance}.\nПополни баланс:`,
-            Markup.inlineKeyboard([[Markup.button.callback('💳 Купить монеты', 'buy_100')]])
+        return ctx.reply(
+            `❌ Недостаточно монет!\n\n` +
+            `🤖 Модель: ${selectedModel.name}\n` +
+            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
+            `💰 Ваш баланс: ${balance} 🪙\n\n` +
+            `Пожалуйста, пополните баланс, выбрав сумму ниже:`,
+            getTopUpKeyboard()
         );
-        return;
     }
 
     try {
-        // Отправка запроса к выбранной платной модели Gemini
+        // Запрос к актуальной модели через Google Gen AI SDK
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
@@ -177,7 +222,7 @@ bot.on('text', async (ctx) => {
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
 
-        // Списываем стоимость модели
+        // Списываем стоимость модели в монетах после успешного ответа
         const newBalance = await updateBalance(userId, -selectedModel.cost);
 
         ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
@@ -188,7 +233,7 @@ bot.on('text', async (ctx) => {
 });
 
 bot.launch().then(() => {
-    console.log('Telegram бот с выбором моделей успешно запущен!');
+    console.log('Telegram бот с выбором тарифов пополнения успешно запущен!');
 });
 
 app.post('/yookassa-webhook', async (req, res) => {
