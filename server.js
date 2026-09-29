@@ -1,7 +1,6 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
-const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -10,19 +9,22 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const users = {};
 
-// Ваш точный ключ API
-const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
+// Ваш новый актуальный ключ
+const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
 
-// Правильная инициализация клиента Google GenAI
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-const MODEL_NAME = "gemini-2.5-flash";
+// Доступные модели для переключения из виджета
+const AVAILABLE_MODELS = {
+    "flash": "gemini-1.5-flash",
+    "flash2": "gemini-2.0-flash",
+    "flash-latest": "gemini-flash-latest"
+};
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: MODEL_NAME };
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
     } else {
         users[clientId].ws = ws;
     }
@@ -33,10 +35,11 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
+        // Обработка переключения моделей с кнопок Тилды
         if (text.startsWith("SET_MODEL:")) {
-            const reqModel = text.split(":")[1];
-            if (["gemini-2.5-flash", "gemini-2.5-pro"].includes(reqModel)) {
-                user.model = reqModel;
+            const modelKey = text.split(":")[1];
+            if (AVAILABLE_MODELS[modelKey]) {
+                user.model = AVAILABLE_MODELS[modelKey];
                 ws.send(`MODEL_UPDATED:${user.model}`);
             }
             return;
@@ -52,24 +55,38 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Запрос через актуальный SDK
-            const response = await ai.models.generateContent({
-                model: user.model,
-                contents: text,
+            // Используем проверенный заголовок X-goog-api-key и выбранную модель по стандарту Google REST API
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }]
+                })
             });
 
-            const replyText = response.text || "Извините, не удалось получить ответ от ИИ.";
-            ws.send(replyText);
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error("API Error details:", data.error);
+                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
+                return;
+            }
+
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            ws.send(aiReply);
             
         } catch (error) {
-            console.error("SDK Error:", error);
-            ws.send(`❌ Ошибка API: ${error.message || 'Не удалось обработать запрос'}`);
+            console.error("Fetch Error:", error);
+            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI WebSocket Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
