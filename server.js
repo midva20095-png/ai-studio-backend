@@ -11,7 +11,7 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// 1. Инициализация официального клиента Google Gemini SDK с вашим ключом
+// 1. Инициализация Google Gemini SDK с вашим ключом
 const apiKey = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KLi2evYUWy-k5spZcT3H9URzBfjm1GRYQrd1xc06JIJQ";
 
 const ai = new GoogleGenAI({
@@ -39,7 +39,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Проверяем тип запроса для расчета стоимости в монетах
+        // Определение типа запроса и расчёт стоимости
         const isImageRequest = text.toLowerCase().startsWith('/img') || 
                                text.toLowerCase().startsWith('нарисуй') || 
                                text.toLowerCase().startsWith('/нарисуй');
@@ -51,7 +51,6 @@ wss.on('connection', (ws, req) => {
             return;
         }
 
-        // Списываем монеты
         user.coins -= cost;
         ws.send(`COINS_UPDATE:${user.coins}`);
 
@@ -66,7 +65,7 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// 2. Генерация текста (Gemini Flash)
+// Генерация текста
 async function generateText(ws, textPrompt) {
     try {
         const response = await ai.models.generateContent({
@@ -87,7 +86,7 @@ async function generateText(ws, textPrompt) {
     }
 }
 
-// 3. Генерация изображений (Gemini Image / Imagen)
+// Генерация изображений
 async function generateImage(ws, prompt) {
     try {
         const response = await ai.models.generateContent({
