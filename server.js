@@ -52,10 +52,10 @@ async function getBalance(userId) {
             await userRef.set({ balance: 5, created_at: new Date() });
             return 5;
         }
-        return doc.data().balance || 0;
+        return Number(doc.data().balance) || 0;
     } catch (error) {
         console.error('Ошибка чтения баланса:', error);
-        return 5;
+        return 0; // В случае ошибки сети с БД лучше вернуть 0, чтобы обезопасить от бесплатных запросов
     }
 }
 
@@ -63,9 +63,9 @@ async function updateBalance(userId, amount) {
     try {
         const userRef = db.collection('users').doc(String(userId));
         const doc = await userRef.get();
-        let currentBalance = 5;
+        let currentBalance = 0;
         if (doc.exists) {
-            currentBalance = doc.data().balance || 0;
+            currentBalance = Number(doc.data().balance) || 0;
         }
         const newBalance = currentBalance + amount;
         await userRef.set({ balance: newBalance, updated_at: new Date() }, { merge: true });
@@ -150,21 +150,26 @@ bot.action('buy_100', async (ctx) => {
     }
 });
 
-// Обработка текстовых сообщений с учетом выбранной модели и списанием монет
+// Обработка текстовых сообщений со строгой проверкой баланса
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
-    const balance = await getBalance(userId);
     const text = ctx.message.text;
 
-    const modelKey = userModels[userId] || 'flash';
+    const modelKey = userModels[userId]  || 'flash';
     const selectedModel = MODELS[modelKey];
 
+    // Жестко запрашиваем актуальный баланс из базы прямо перед отправкой
+    const balance = await getBalance(userId);
+
     if (balance < selectedModel.cost) {
-        ctx.reply(
-            `Недостаточно монет! 🪙 Для модели ${selectedModel.name} нужно ${selectedModel.cost} монета(ы). Твой баланс: ${balance}.\nПополни баланс:`,
-            Markup.inlineKeyboard([[Markup.button.callback('💳 Купить монеты', 'buy_100')]])
+        return ctx.reply(
+            `❌ Недостаточно монет!\n\n` +
+            `🤖 Модель: ${selectedModel.name}\n` +
+            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
+            `💰 Ваш баланс: ${balance} 🪙\n\n` +
+            `Пожалуйста, пополните баланс для продолжения работы:`,
+            Markup.inlineKeyboard([[Markup.button.callback('💳 Купить 20 монет (100 руб)', 'buy_100')]])
         );
-        return;
     }
 
     try {
@@ -176,10 +181,10 @@ bot.on('text', async (ctx) => {
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
 
-        // Списываем стоимость модели в монетах
+        // Списываем стоимость модели в монетах после успешного ответа
         const newBalance = await updateBalance(userId, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_moDe: 'Markdown' });
+        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
@@ -187,7 +192,7 @@ bot.on('text', async (ctx) => {
 });
 
 bot.launch().then(() => {
-    console.log('Telegram бот с выбором моделей успешно запущен!');
+    console.log('Telegram бот со строгой проверкой баланса успешно запущен!');
 });
 
 app.post('/yookassa-webhook', async (req, res) => {
