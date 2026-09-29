@@ -17,7 +17,7 @@ const GEMINI_API_KEY = "AQ.Ab8RN6K8r-5-gRNYmczuTwZIatq_k_el2V1ySLGRnaWr-vQn8Q";
 // Инициализация официального клиента Google GenAI
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-// Актуальные модели под стандарт Interactions API
+// Актуальная модель
 const AVAILABLE_MODELS = {
     "flash": "gemini-3.8-flash",
     "flash2": "gemini-3.8-flash",
@@ -60,24 +60,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Запрос через Interactions API с использованием актуальной модели
-            const interaction = await ai.interactions.create({
+            // Стабильный запрос через официальный SDK
+            const response = await ai.models.generateContent({
                 model: user.model,
-                input: text
+                contents: text,
             });
 
-            const aiReply = interaction.output_text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("Interactions API Error:", error);
+            console.error("SDK Error:", error);
             ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Interactions API Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
