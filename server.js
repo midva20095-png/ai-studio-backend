@@ -77,7 +77,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Генерация ссылки на оплату с фиксированными суммами
+// Генерация ссылки на оплату
 async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -212,12 +212,20 @@ bot.action('back_to_main', async (ctx) => {
     );
 });
 
-// ГЛАВНАЯ ЛОГИКА ПО ТВОЕМУ ЗАПРОСУ: Проверка и выдача по сообщению от ЮKassa
+// ПРОВЕРКА С ЗАЩИТОЙ ОТ ПОВТОРНОГО ИСПОЛЬЗОВАНИЯ ПЛАТЕЖА
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
 
     await ctx.answerCbQuery('Проверяем платеж...');
+
+    // Защита: проверяем, не был ли этот платеж уже использован раньше
+    const paymentRef = db.collection('processed_payments').doc(paymentId);
+    const paymentDoc = await paymentRef.get();
+
+    if (paymentDoc.exists) {
+        return ctx.reply('❌ Этот платеж уже был использован ранее! Повторно получить токены по нему нельзя.');
+    }
 
     const paymentInfo = await checkPaymentStatus(paymentId);
     if (!paymentInfo) {
@@ -229,10 +237,16 @@ bot.action(/^check_(.+)$/, async (ctx) => {
         const coins = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
+        // Помечаем платеж как использованный в базе (защита от абуза)
+        await paymentRef.set({
+            userId: userId,
+            coins: coins,
+            used_at: new Date()
+        });
+
         // Начисляем токены на баланс
         const newBalance = await updateBalance(userId, coins);
 
-        // Отправляем то самое сообщение об успешной оплате, как ты и сказал
         return ctx.reply(
             `✅ Вы успешно купили ${coins} токенов этой херни! (Сумма: ${amountPaid} руб.)\n` +
             `🎉 Баланс успешно пополнен.\n` +
@@ -296,7 +310,7 @@ if (RENDER_EXTERNAL_URL) {
 }
 
 app.get('/', (req, res) => {
-    res.send('Server is running!');
+    res.send('Server is running safely!');
 });
 
 app.listen(PORT, () => {
