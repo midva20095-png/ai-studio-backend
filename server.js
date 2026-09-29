@@ -17,7 +17,7 @@ const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
 // Твоя новая точная ссылка на веб-приложение Google Таблицы
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyq4Joa7pPtUUNESXoZtXG9YWjy0RKEvUTH8zG0mi55rtjrMsb945VrU1rY3LRt7Oiw/exec';
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxCOjFFQPjmqu0SN4cWMui1aTxE_dsaUC-7L95EDalVib2erzJNB6TaAklzPPglwcuy/exec';
 
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
