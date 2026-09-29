@@ -6,6 +6,12 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.use(cors());
+app.use(express.json());
+
 // Инициализация Firebase через переменные окружения Render или локальный файл
 if (process.env.FIREBASE_CONFIG_JSON) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
@@ -25,14 +31,8 @@ if (process.env.FIREBASE_CONFIG_JSON) {
 
 const db = admin.firestore();
 
-// Инициализация Google Gen AI с платным ключом
+// Инициализация Google Gen AI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.use(cors());
-app.use(express.json());
 
 const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
 const bot = new Telegraf(BOT_TOKEN);
@@ -40,13 +40,12 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Актуальные эндпоинты моделей из официальной документации
+// Модели искусственного интеллекта
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
     'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
-// Хранение выбранной модели для каждого пользователя в памяти
 const userModels = {};
 
 // Работа с балансом через Firestore
@@ -83,7 +82,7 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Создание платежа ЮKassa с передачей payment_id в metadata
+// Создание платежа ЮKassa
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -115,7 +114,7 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
     }
 }
 
-// Ручная проверка статуса платежа через API ЮKassa
+// Проверка статуса платежа через API ЮKassa
 async function checkPaymentStatus(paymentId) {
     const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -130,7 +129,7 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Главная клавиатура выбора пополнения (от 1 руб до 5000 руб)
+// Клавиатура пополнения
 function getTopUpKeyboard() {
     return Markup.inlineKeyboard([
         [Markup.button.callback('🧪 1 руб. (1 монета - тест)', 'buy_1'), Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50')],
@@ -192,7 +191,7 @@ bot.action('back_to_main', async (ctx) => {
     );
 });
 
-// Тарифы (от 1 до 5000 руб)
+// Тарифы
 const tariffs = [
     { action: 'buy_1', coins: 1, price: 1 },
     { action: 'buy_50', coins: 10, price: 50 },
@@ -226,7 +225,7 @@ tariffs.forEach(tariff => {
     });
 });
 
-// Обработка ручной проверки платежа
+// Ручная проверка платежа
 bot.action(/^check_(.+)_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const coins = parseInt(ctx.match[2]);
@@ -249,7 +248,7 @@ bot.action(/^check_(.+)_(.+)$/, async (ctx) => {
     }
 });
 
-// Обработка текстовых сообщений со строгой проверкой баланса
+// Обработка текста
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
@@ -286,10 +285,6 @@ bot.on('text', async (ctx) => {
     }
 });
 
-bot.launch().then(() => {
-    console.log('Telegram бот с тарифами от 1 рубля запущен!');
-});
-
 // Вебхук от ЮKassa
 app.post('/yookassa-webhook', async (req, res) => {
     console.log('--- ПОЛУЧЕН ВЕБХУК ОТ ЮKASSA ---');
@@ -316,8 +311,16 @@ app.get('/', (req, res) => {
     res.send('Server is running with multi-model Gemini AI, Telegram & Firebase!');
 });
 
+// 1. Сначала запускаем веб-сервер, чтобы Render сразу поймал открытый порт
 app.listen(PORT, () => {
     console.log(`Web server is running on port ${PORT}`);
+    
+    // 2. Затем запускаем Telegram-бота
+    bot.launch().then(() => {
+        console.log('Telegram бот с тарифами от 1 рубля запущен!');
+    }).catch(err => {
+        console.error('Ошибка запуска Telegram бота:', err);
+    });
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
