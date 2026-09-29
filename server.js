@@ -10,8 +10,8 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш API-ключ Gemini
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KfdaHQ_v1_rheuubC-nDQECRiG_mfRq2oG9KLhn6Labw";
+// Ваш ключ
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KLi2evYUWy-k5spZcT3H9URzBfjm1GRYQrd1xc06JIJQ";
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
@@ -37,7 +37,7 @@ wss.on('connection', (ws, req) => {
         user.coins -= 1;
         ws.send(`COINS_UPDATE:${user.coins}`);
 
-        // Проверка: запрос на генерацию картинки или текстовый вопрос
+        // Проверяем, запрос ли это на картинку
         const isImageRequest = text.toLowerCase().startsWith('/img') || 
                                text.toLowerCase().startsWith('нарисуй') || 
                                text.toLowerCase().startsWith('/нарисуй');
@@ -53,14 +53,17 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// Ответы на текстовые вопросы
+// Запрос текста с передачей ключа через заголовок X-goog-api-key
 async function generateText(ws, textPrompt) {
     try {
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
+                },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: textPrompt }] }]
                 })
@@ -84,14 +87,17 @@ async function generateText(ws, textPrompt) {
     }
 }
 
-// Генерация изображений
+// Запрос картинки с передачей ключа через заголовок X-goog-api-key
 async function generateImage(ws, prompt) {
     try {
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${GEMINI_API_KEY}`,
+            'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
+                },
                 body: JSON.stringify({
                     instances: [{ prompt: prompt }],
                     parameters: { sampleCount: 1, aspectRatio: "1:1" }
