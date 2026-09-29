@@ -50,7 +50,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     
     const body = {
         amount: { value: `${amountRub}.00`, currency: 'RUB' },
-        confirmation: { type: 'redirect', return_url: 'https://t.me/' + (await bot.telegram.getMe()).username },
+        confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' }, // Жестко указана ссылка без асинхронных сбоев
         capture: true,
         description: `Покупка ${coinsCount} токенов (Сумма: ${amountRub} руб)`,
         metadata: { user_id: String(userId), coins: String(coinsCount) }
@@ -104,7 +104,7 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Красивое главное меню в виде сетки
+// Главное меню в виде аккуратной сетки кнопок
 async function sendMainMenu(ctx, edit = false) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -156,7 +156,6 @@ bot.command('menu', async (ctx) => {
     await sendMainMenu(ctx, false);
 });
 
-// Назначение моделей через кнопки
 const modelActions = {
     'set_model_flash_3_8': 'flash_3_8',
     'set_model_pro_3_1': 'pro_3_1',
@@ -325,7 +324,7 @@ bot.on('photo', async (ctx) => {
         await handleUserQuery(ctx, caption, photoBuffer);
     } catch (e) {
         console.error('Ошибка загрузки фото:', e);
-        await ctx.reply('❌ Не удалось обработать прикрепленное фото.');
+        ctx.reply('❌ Не удалось обработать прикрепленное фото.');
     }
 });
 
@@ -341,7 +340,7 @@ if (RENDER_EXTERNAL_URL) {
 }
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Bot Server is running with Google Sheets & YooKassa!');
+    res.send('AI Studio Bot Server is running successfully!');
 });
 
 app.listen(PORT, () => {
