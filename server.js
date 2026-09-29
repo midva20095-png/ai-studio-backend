@@ -27,6 +27,31 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+// Вспомогательная функция задержки
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Функция запроса к модели с повторными попытками при ошибках 503/429
+async function generateWithRetry(modelName, prompt, retries = 2) {
+  const model = genAI.getGenerativeModel({ model: modelName });
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      if (text) return text;
+    } catch (err) {
+      const isRateLimitOrOverload = err.message && (err.message.includes('503') || err.message.includes('429'));
+      if (isRateLimitOrOverload && attempt < retries) {
+        console.warn(`Модель ${modelName} перегружена (попытка ${attempt + 1}). Ждем 1 сек...`);
+        await delay(1000);
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`Не удалось получить ответ от ${modelName}`);
+}
+
 const handleChat = async (req, res) => {
   try {
     if (!genAI) {
@@ -42,20 +67,17 @@ const handleChat = async (req, res) => {
       return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
     }
 
-    // Список моделей по приоритету (если первая перегружена, сработает следующая)
+    // Список моделей по приоритету стабильности
     const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
     let text = null;
     let lastError = null;
 
     for (const modelName of modelsToTry) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(userMessage.trim());
-        const response = await result.response;
-        text = response.text();
-        if (text) break; // Ответ успешно получен!
+        text = await generateWithRetry(modelName, userMessage.trim());
+        if (text) break;
       } catch (err) {
-        console.warn(`Модель ${modelName} недоступна, пробуем следующую...`, err.message);
+        console.warn(`Ошибка с моделью ${modelName}:`, err.message);
         lastError = err;
       }
     }
@@ -63,13 +85,13 @@ const handleChat = async (req, res) => {
     if (text) {
       return res.json({ reply: text });
     } else {
-      throw lastError || new Error('Сервисы Google сейчас перегружены.');
+      throw lastError || new Error('Сервисы Google временно недоступны.');
     }
 
   } catch (error) {
-    console.error('Детали ошибки Gemini API:', error);
+    console.error('Ошибка бэкенда:', error);
     return res.status(500).json({ 
-      reply: 'Сервер сейчас очень загружен. Попробуйте повторить запрос через 10–15 секунд.'
+      reply: 'Сервер перегружен. Пожалуйста, повторите попытку через пару секунд.'
     });
   }
 };
