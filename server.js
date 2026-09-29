@@ -1,6 +1,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -13,11 +14,14 @@ const users = {};
 // Ваш актуальный ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6K8r-5-gRNYmczuTwZIatq_k_el2V1ySLGRnaWr-vQn8Q";
 
-// Актуальные модели из официальной документации
+// Инициализация официального клиента Google GenAI
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+// Актуальные модели под стандарт Interactions API
 const AVAILABLE_MODELS = {
     "flash": "gemini-3.8-flash",
-    "flash2": "gemini-3.6-flash",
-    "flash-latest": "gemini-flash-latest"
+    "flash2": "gemini-3.8-flash",
+    "flash-latest": "gemini-3.8-flash"
 };
 
 wss.on('connection', (ws, req) => {
@@ -56,37 +60,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
+            // Запрос через Interactions API с использованием актуальной модели
+            const interaction = await ai.interactions.create({
+                model: user.model,
+                input: text
             });
 
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                return;
-            }
-
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = interaction.output_text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("Fetch Error:", error);
-            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+            console.error("Interactions API Error:", error);
+            ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio Interactions API Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
