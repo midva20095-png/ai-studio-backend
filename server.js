@@ -25,8 +25,7 @@ wss.on('connection', (ws, req) => {
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        // По умолчанию ставим самую стабильную 1.5-flash, чтобы не было сбоев
-        users[clientId] = { ws: ws, coins: 10, model: "gemini-1.5-flash" };
+        users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
     } else {
         users[clientId].ws = ws;
     }
@@ -57,42 +56,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`;
+            // Передаем ключ через URL параметром ?key=, так как для AQ-ключей это самый надежный метод обхода OAuth-ошибок
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
 
-            let response = await fetch(url, {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
                 })
             });
 
-            let data = await response.json();
+            const data = await response.json();
             
-            // Если экспериментальная модель упала с ошибкой, автоматически подстрахуем стабильной 1.5-flash
-            if (data.error && user.model !== "gemini-1.5-flash") {
-                console.warn(`Модель ${user.model} ответила с ошибкой, переключаемся на gemini-1.5-flash...`);
-                const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
-                
-                const fallbackResponse = await fetch(fallbackUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-goog-api-key': GEMINI_API_KEY
-                    },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: text }] }]
-                    })
-                });
-                data = await fallbackResponse.json();
-            }
-
             if (data.error) {
                 console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
+                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
                 return;
             }
 
