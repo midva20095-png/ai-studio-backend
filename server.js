@@ -10,7 +10,7 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш ключ
+// Ваш API-ключ
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KLi2evYUWy-k5spZcT3H9URzBfjm1GRYQrd1xc06JIJQ";
 
 wss.on('connection', (ws, req) => {
@@ -37,7 +37,7 @@ wss.on('connection', (ws, req) => {
         user.coins -= 1;
         ws.send(`COINS_UPDATE:${user.coins}`);
 
-        // Проверяем, запрос ли это на картинку
+        // Определение типа запроса: генерация изображения или текст
         const isImageRequest = text.toLowerCase().startsWith('/img') || 
                                text.toLowerCase().startsWith('нарисуй') || 
                                text.toLowerCase().startsWith('/нарисуй');
@@ -53,7 +53,7 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// Запрос текста с передачей ключа через заголовок X-goog-api-key
+// Запрос текста
 async function generateText(ws, textPrompt) {
     try {
         const response = await fetch(
@@ -87,7 +87,7 @@ async function generateText(ws, textPrompt) {
     }
 }
 
-// Запрос картинки с передачей ключа через заголовок X-goog-api-key
+// Запрос генерации картинки (Imagen 3)
 async function generateImage(ws, prompt) {
     try {
         const response = await fetch(
