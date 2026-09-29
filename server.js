@@ -1,6 +1,7 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
@@ -13,7 +14,10 @@ const users = {};
 // Ваш новый актуальный ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6LL4eTAqqLp5LBp-CvaoFlv4_4nd4bqGOC1ye8cg_Wvqg";
 
-// Доступные модели для переключения из виджета
+// Инициализация по новой официальной документации Google GenAI SDK
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+// Доступные модели для переключения из виджета Tilda
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -56,38 +60,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Используем ваш проверенный заголовок X-goog-api-key и выбранную модель
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': GEMINI_API_KEY
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }]
-                })
+            // Официальный метод запроса из актуальных доков Google
+            const response = await ai.models.generateContent({
+                model: user.model,
+                contents: text,
             });
 
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error("API Error details:", data.error);
-                ws.send(`❌ Ошибка API (${user.model}): ${data.error.message || 'Не удалось обработать запрос'}`);
-                return;
-            }
-
-            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
             ws.send(aiReply);
             
         } catch (error) {
-            console.error("Fetch Error:", error);
-            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+            console.error("SDK Error details:", error);
+            ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend is running!');
+    res.send('AI Studio SDK Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
