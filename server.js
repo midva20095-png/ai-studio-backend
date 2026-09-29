@@ -8,35 +8,30 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// Отлавливаем критические ошибки
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-// Инициализация Gemini API
 const apiKey = process.env.GEMINI_API_KEY;
 let genAI = null;
 
 if (apiKey) {
   genAI = new GoogleGenerativeAI(apiKey.trim());
-} else {
-  console.warn('ВНИМАНИЕ: GEMINI_API_KEY не задан в переменной окружения!');
 }
 
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// Поддерживаем обработку запросов как на /chat, так и на /api/chat
 const handleChat = async (req, res) => {
   try {
     if (!genAI) {
       return res.status(500).json({ 
-        error: 'Сервер не настроен: отсутствует GEMINI_API_KEY в Environment Variables.' 
+        reply: 'Ошибка: Переменная GEMINI_API_KEY не задана в Environment Variables на Render.' 
       });
     }
 
@@ -44,21 +39,21 @@ const handleChat = async (req, res) => {
     const userMessage = message || prompt;
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim() === '') {
-      return res.status(400).json({ error: 'Сообщение не передано или пустое.' });
+      return res.status(400).json({ reply: 'Ошибка: Сообщение не передано или пустое.' });
     }
 
-    // Запрос к актуальной модели Gemini 2.5 Flash
+    // Обращаемся к Gemini 2.5 Flash
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(userMessage.trim());
     const response = await result.response;
     const text = response.text();
 
-    return res.json({ reply: text, text: text });
+    return res.json({ reply: text });
   } catch (error) {
-    console.error('Ошибка при вызове Gemini API:', error);
+    console.error('Детали ошибки Gemini API:', error);
+    // Возвращаем точную причину ошибки прямо в чат
     return res.status(500).json({ 
-      error: 'Ошибка обработки запроса на сервере.', 
-      details: error.message || String(error)
+      reply: `Ошибка API: ${error.message || 'Неизвестная ошибка на сервере'}`
     });
   }
 };
