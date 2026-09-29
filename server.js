@@ -6,7 +6,7 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
-// Инициализация Firebase (поддержка и локального файла, и переменных окружения Render)
+// Инициализация Firebase
 if (process.env.FIREBASE_CONFIG_JSON) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
     admin.initializeApp({
@@ -25,7 +25,7 @@ if (process.env.FIREBASE_CONFIG_JSON) {
 
 const db = admin.firestore();
 
-// Инициализация Google Gen AI с платным ключом
+// Инициализация Google Gen AI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
@@ -40,16 +40,13 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Актуальные эндпоинты моделей из официальной документации
 const MODELS = {
     'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
     'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
-// Хранение выбранной модели для каждого пользователя в памяти
 const userModels = {};
 
-// Работа с балансом через Firestore
 async function getBalance(userId) {
     try {
         const userRef = db.collection('users').doc(String(userId));
@@ -82,7 +79,6 @@ async function updateBalance(userId, amount) {
     }
 }
 
-// Создание платежа ЮKassa с сохранением монет и user_id в metadata
 async function createYooKassaPayment(userId, amountCoins, priceRub) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -113,7 +109,6 @@ async function createYooKassaPayment(userId, amountCoins, priceRub) {
     }
 }
 
-// Проверка статуса платежа через API ЮKassa
 async function checkPaymentStatus(paymentId) {
     const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -128,10 +123,9 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Главная клавиатура выбора пополнения (от 50 до 5000 руб)
 function getTopUpKeyboard() {
     return Markup.inlineKeyboard([
-        [Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50'), Markup.button.callback('💳 200 руб. (40 монет', 'buy_200')],
+        [Markup.button.callback('💳 50 руб. (10 монет)', 'buy_50'), Markup.button.callback('💳 200 руб. (40 монет)', 'buy_200')],
         [Markup.button.callback('💳 500 руб. (100 монет)', 'buy_500'), Markup.button.callback('💳 1000 руб. (200 монет)', 'buy_1000')],
         [Markup.button.callback('🚀 5000 руб. (1000 монет)', 'buy_5000')],
         [Markup.button.callback('🔙 Назад в меню', 'back_to_main')]
@@ -190,7 +184,6 @@ bot.action('back_to_main', async (ctx) => {
     );
 });
 
-// Обработчики кнопок пополнения на разную сумму
 const tariffs = [
     { action: 'buy_50', coins: 10, price: 50 },
     { action: 'buy_200', coins: 40, price: 200 },
@@ -223,7 +216,6 @@ tariffs.forEach(tariff => {
     });
 });
 
-// Надежная ручная проверка платежа через метаданные ЮKassa
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
@@ -236,7 +228,6 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 
     if (paymentInfo.status === 'succeeded') {
-        // Достаем количество монет строго из метаданных платежа ЮKassa, исключая любые баги с нулями
         const coins = parseInt(paymentInfo.metadata?.coins) || 0;
         
         if (coins <= 0) {
@@ -252,7 +243,6 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// Обработка текстовых сообщений со строгой проверкой баланса
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
@@ -289,9 +279,17 @@ bot.on('text', async (ctx) => {
     }
 });
 
-bot.launch().then(() => {
-    console.log('Telegram бот с выбором тарифов пополнения успешно запущен!');
-});
+// Настройка вебхука для Telegram вместо bot.launch() (убирает ошибку 409 навсегда)
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL; // Render сам предоставляет этот URL
+if (RENDER_EXTERNAL_URL) {
+    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+    app.use(bot.webhookCallback(webhookPath));
+    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
+        console.log(`Telegram webhook успешно установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
+    });
+} else {
+    console.warn('ВНИМАНИЕ: Переменная RENDER_EXTERNAL_URL не найдена. Вебхук Telegram не установлен!');
+}
 
 // Вебхук от ЮKassa
 app.post('/yookassa-webhook', async (req, res) => {
@@ -313,12 +311,9 @@ app.post('/yookassa-webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Server is running with multi-model Gemini AI, Telegram & Firebase!');
+    res.send('Server is running with webhooks, multi-model Gemini AI & Firebase!');
 });
 
 app.listen(PORT, () => {
     console.log(`Web server is running on port ${PORT}`);
 });
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
