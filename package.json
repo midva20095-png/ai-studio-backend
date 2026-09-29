@@ -1,7 +1,6 @@
 {
   "name": "ai-tilda-backend",
   "version": "1.0.0",
-  "description": "WebSocket AI Backend for Tilda with Google GenAI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
