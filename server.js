@@ -27,8 +27,6 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const handleChat = async (req, res) => {
   try {
     if (!genAI) {
@@ -44,43 +42,36 @@ const handleChat = async (req, res) => {
       return res.status(400).json({ reply: 'Сообщение не передано или пустое.' });
     }
 
-    // Приоритетная модель gemini-3.8-flash, резервная gemini-1.5-flash
-    const modelsToTry = ['gemini-3.8-flash', 'gemini-1.5-flash'];
-    let text = null;
-    let lastError = null;
+    // Пробуем сначала gemini-3.8-flash
+    try {
+      const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
+      const result = await model.generateContent(userMessage.trim());
+      const response = await result.response;
+      const text = response.text();
+      if (text) return res.json({ reply: text });
+    } catch (err1) {
+      console.warn('Ошибка gemini-3.8-flash:', err1.message);
 
-    for (const modelName of modelsToTry) {
+      // Если 3.8 не сработала, сразу пробуем gemini-1.5-flash
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(userMessage.trim());
-        const response = await result.response;
-        text = response.text();
-        
-        if (text) {
-          console.log(`Успешный ответ от модели: ${modelName}`);
-          break;
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn(`Модель ${modelName} вернула ошибку:`, err.message);
-        
-        // В случае перегрузки (503/429) делаем микропаузу и сразу переходим к резервной
-        if (err.message && (err.message.includes('503') || err.message.includes('429'))) {
-          await delay(300);
-        }
+        const modelBackup = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const resultBackup = await modelBackup.generateContent(userMessage.trim());
+        const responseBackup = await resultBackup.response;
+        const textBackup = responseBackup.text();
+        if (textBackup) return res.json({ reply: textBackup });
+      } catch (err2) {
+        console.warn('Ошибка gemini-1.5-flash:', err2.message);
+        // Возвращаем детали обеих ошибок для диагностики
+        return res.status(500).json({ 
+          reply: `Ошибка M1 (3.8): ${err1.message} | Ошибка M2 (1.5): ${err2.message}` 
+        });
       }
     }
 
-    if (text) {
-      return res.json({ reply: text });
-    } else {
-      throw lastError || new Error('Все модели временно недоступны.');
-    }
-
   } catch (error) {
-    console.error('Ошибка бэкенда:', error);
+    console.error('Критическая ошибка бэкенда:', error);
     return res.status(500).json({ 
-      reply: 'Сервер сейчас очень загружен. Попробуйте повторить запрос через пару секунд.'
+      reply: `Критическая ошибка: ${error.message}`
     });
   }
 };
