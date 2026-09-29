@@ -1,14 +1,23 @@
 const express = require('express');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// Настройка CORS вручную (без сторонних библиотек)
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 app.use(express.json());
 
-// Ваш новый ключ
+// Ваш API-ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6KfdaHQ_v1_rheuubC-nDQECRiG_mfRq2oG9KLhn6Labw";
 
-// Простой HTTP POST эндпоинт
 app.post('/api/chat', async (req, res) => {
     const { message, model } = req.body;
 
@@ -54,7 +63,7 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Backend (HTTP REST) is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
