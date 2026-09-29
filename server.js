@@ -10,21 +10,19 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const users = {};
 
-// Ваш актуальный ключ API (также продублируем в process.env для надежности SDK)
+// Ваш точный ключ API
 const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
-process.env.GEMINI_API_KEY = GEMINI_API_KEY;
 
-// Инициализация клиента Google GenAI с явной передачей ключа
+// Правильная инициализация клиента Google GenAI
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const MODEL_NAME = "gemini-2.5-flash";
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
     const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
-        users[clientId] = { ws: ws, coins: 10, model: DEFAULT_MODEL };
+        users[clientId] = { ws: ws, coins: 10, model: MODEL_NAME };
     } else {
         users[clientId].ws = ws;
     }
@@ -36,9 +34,9 @@ wss.on('connection', (ws, req) => {
         const user = users[clientId];
 
         if (text.startsWith("SET_MODEL:")) {
-            const requestedModel = text.split(":")[1];
-            if (["gemini-2.5-flash", "gemini-2.5-pro"].includes(requestedModel)) {
-                user.model = requestedModel;
+            const reqModel = text.split(":")[1];
+            if (["gemini-2.5-flash", "gemini-2.5-pro"].includes(reqModel)) {
+                user.model = reqModel;
                 ws.send(`MODEL_UPDATED:${user.model}`);
             }
             return;
@@ -54,25 +52,24 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            // Корректный вызов генерации контента через SDK @google/genai
+            // Запрос через актуальный SDK
             const response = await ai.models.generateContent({
                 model: user.model,
-                contents: [text],
+                contents: text,
             });
 
-            // Извлекаем текст ответа согласно структуре SDK
-            const aiReply = response.text || (response.candidates && response.candidates[0]?.content?.parts[0]?.text) || "Извините, не удалось получить ответ от ИИ.";
-            ws.send(aiReply);
+            const replyText = response.text || "Извините, не удалось получить ответ от ИИ.";
+            ws.send(replyText);
             
         } catch (error) {
-            console.error("SDK Error details:", error);
-            ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
+            console.error("SDK Error:", error);
+            ws.send(`❌ Ошибка API: ${error.message || 'Не удалось обработать запрос'}`);
         }
     });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio WebSocket Backend is running!');
+    res.send('AI WebSocket Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
