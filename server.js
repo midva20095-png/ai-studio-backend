@@ -34,10 +34,10 @@ const bot = new Telegraf(BOT_TOKEN);
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 
-// Актуальные модели и стоимость в монетах (1 монета = 5 рублей)
+// Актуальные эндпоинты моделей из официальной документации
 const MODELS = {
-    'flash': { name: '⚡ Gemini Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro / Gemini Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
+    'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
 
 // Хранение выбранной модели для каждого пользователя в памяти
@@ -115,7 +115,7 @@ bot.start(async (ctx) => {
         `🤖 Текущая модель: *${MODELS[currentModelKey].name}* (Стоимость: ${MODELS[currentModelKey].cost} монета(ы) за запрос)\n\n` +
         `Выбери нужную модель или отправь текстовый вопрос:`,
         Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini Flash (1 монета)', 'set_model_flash')],
+            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 монета)', 'set_model_flash')],
             [Markup.button.callback('🧠 Nano Banana Pro (5 монет)', 'set_model_pro')],
             [Markup.button.callback('💳 Купить 20 монет (100 руб)', 'buy_100')]
         ])
@@ -125,15 +125,15 @@ bot.start(async (ctx) => {
 bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini Flash');
-    ctx.reply('✅ Успешно! Теперь активна модель **Gemini Flash** (списание: 1 монета / 5 рублей за запрос).');
+    await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
+    ctx.reply('✅ Успешно! Теперь активна модель **Gemini 3.8 Flash** (списание: 1 монета / 5 рублей за запрос).');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
     await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro** (списание: 5 монет / 25 рублей за запрос).');
+    ctx.reply('🧠 Успешно! Теперь активна премиум-модель **Nano Banana Pro / Gemini 3.1 Pro** (списание: 5 монет / 25 рублей за запрос).');
 });
 
 bot.action('buy_100', async (ctx) => {
@@ -168,7 +168,7 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-        // Запрос к актуальной платной модели через новый SDK
+        // Запрос к актуальной модели через Google Gen AI SDK
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
@@ -179,7 +179,7 @@ bot.on('text', async (ctx) => {
         // Списываем стоимость модели в монетах
         const newBalance = await updateBalance(userId, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
+        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_moDe: 'Markdown' });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
