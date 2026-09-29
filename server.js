@@ -1,65 +1,71 @@
 const express = require('express');
+const { WebSocketServer } = require('ws');
+const http = require('http');
 
 const app = express();
-
-// Настройка CORS вручную (без сторонних библиотек)
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
-
 app.use(express.json());
 
-// Ваш API-ключ
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+const users = {}; 
+
+// Ваш новый ключ
 const GEMINI_API_KEY = "AQ.Ab8RN6KfdaHQ_v1_rheuubC-nDQECRiG_mfRq2oG9KLhn6Labw";
 
-app.post('/api/chat', async (req, res) => {
-    const { message, model } = req.body;
+wss.on('connection', (ws, req) => {
+    const urlParts = req.url.split('/');
+    const clientId = urlParts[urlParts.length - 1];
 
-    if (!message) {
-        return res.status(400).json({ error: "Сообщение не должно быть пустым" });
+    if (!users[clientId]) {
+        users[clientId] = { ws: ws, coins: 10 };
+    } else {
+        users[clientId].ws = ws;
     }
 
-    const selectedModel = model || "gemini-1.5-flash";
+    ws.send(`COINS_UPDATE:${users[clientId].coins}`);
 
-    try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${GEMINI_API_KEY}`;
+    ws.on('message', async (message) => {
+        const text = message.toString();
+        const user = users[clientId];
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                contents: [
-                    {
-                        parts: [{ text: message }]
-                    }
-                ]
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.error) {
-            console.error("Google API Error:", data.error);
-            return res.status(data.error.code || 500).json({ 
-                error: data.error.message || "Ошибка на стороне Google API" 
-            });
+        if (user.coins <= 0) {
+            ws.send("⚠️ У вас закончились монеты. Пополните баланс!");
+            return;
         }
 
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Пустой ответ от нейросети.";
-        return res.json({ reply });
+        user.coins -= 1;
+        ws.send(`COINS_UPDATE:${user.coins}`);
+        ws.send("⏳ Думаю над ответом...");
 
-    } catch (err) {
-        console.error("Server Error:", err);
-        return res.status(500).json({ error: "Внутренняя ошибка сервера" });
-    }
+        try {
+            const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }]
+                })
+            });
+
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error("API Error details:", data.error);
+                ws.send(`❌ Ошибка API: ${data.error.message || 'Не удалось обработать запрос'}`);
+                return;
+            }
+
+            const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Извините, не удалось получить ответ от ИИ.";
+            ws.send(aiReply);
+            
+        } catch (error) {
+            console.error("Fetch Error:", error);
+            ws.send("❌ Произошла сетевая ошибка при обращении к нейросети.");
+        }
+    });
 });
 
 app.get('/', (req, res) => {
@@ -67,6 +73,6 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });
