@@ -6,6 +6,7 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
+// Инициализация Firebase
 if (process.env.FIREBASE_CONFIG_JSON) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
     admin.initializeApp({
@@ -19,7 +20,7 @@ if (process.env.FIREBASE_CONFIG_JSON) {
     });
     console.log('Firebase успешно подключен из локального файла!');
 } else {
-    console.warn('ВНИМАНИЕ: Ключ Firebase не найден ни в файле, ни в переменных окружения!');
+    console.error('КРИТИЧЕСКАЯ ОШИБКА: Ключ Firebase не найден! База данных не будет работать.');
 }
 
 const db = admin.firestore();
@@ -44,17 +45,28 @@ const MODELS = {
 
 const userModels = {};
 
-async function getBalance(userId) {
+// Жесткая работа с базой данных для каждого пользователя (Личный кабинет)
+async function getOrCreateUser(userId, username = '') {
     try {
         const userRef = db.collection('users').doc(String(userId));
         const doc = await userRef.get();
+        
         if (!doc.exists) {
-            await userRef.set({ balance: 5, created_at: new Date() });
+            // Новый пользователь — даем стартовые 5 токенов и фиксируем в базе
+            const initialData = {
+                userId: String(userId),
+                username: username || 'unknown',
+                balance: 5,
+                created_at: new Date()
+            };
+            await userRef.set(initialData);
+            console. зарегистрирован новый пользователь: ${userId}`);
             return 5;
         }
+        
         return Number(doc.data().balance) || 0;
     } catch (error) {
-        console.error('Ошибка чтения баланса:', error);
+        console.error('Ошибка работы с Firestore (getBalance):', error);
         return 0;
     }
 }
@@ -64,15 +76,21 @@ async function updateBalance(userId, amount) {
         const userRef = db.collection('users').doc(String(userId));
         const doc = await userRef.get();
         let currentBalance = 0;
+        
         if (doc.exists) {
             currentBalance = Number(doc.data().balance) || 0;
         }
+        
         const newBalance = currentBalance + amount;
-        await userRef.set({ balance: newBalance, updated_at: new Date() }, { merge: true });
-        console.log(`Баланс пользователя ${userId} изменен на ${amount}. Итог: ${newBalance}`);
+        await userRef.set({ 
+            balance: newBalance, 
+            updated_at: new Date() 
+        }, { merge: true });
+        
+        console.log(`Баланс пользователя ${userId} изменен на ${amount}. Итог в базе: ${newBalance}`);
         return newBalance;
     } catch (error) {
-        console.error('Ошибка обновления баланса:', error);
+        console.error('Ошибка обновления баланса в базе:', error);
         return 0;
     }
 }
@@ -114,7 +132,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
                 ...Markup.inlineKeyboard([
                     [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, paymentData.confirmationUrl)],
                     [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentData.paymentId}`)],
-                    [Markup.button.callback(`🔙 Назад`, `menu_buy`)]
+                    [Markup.button.callback(`🔙 На главную`, `menu_main`)]
                 ])
             }
         );
@@ -138,21 +156,28 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
+// Стартовая команда /start (Регистрация в базе + личный кабинет)
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
-    const balance = await getBalance(userId);
+    const username = ctx.from.username || ctx.from.first_name || 'User';
+    
+    const balance = await getOrCreateUser(userId, username);
     const currentModelKey = userModels[userId] || 'flash';
     
     ctx.reply(
-        `Привет! Я твой ИИ-помощник.\n\n` +
-        `💰 Твой баланс: ${balance} 🪙\n` +
+        `👋 Добро пожаловать в личный кабинет, *${username}*!\n\n` +
+        `🆔 Ваш ID в системе: \`${userId}\`\n` +
+        `💰 Ваш баланс: *${balance} 🪙* токенов\n` +
         `🤖 Текущая модель: *${MODELS[currentModelKey].name}*\n\n` +
-        `Выбери нужную модель или пополни баланс:`,
-        Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
-            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
-        ])
+        `Вы зарегистрированы в базе данных. Выбирайте модель или пополняйте баланс:`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
+                [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
+            ])
+        }
     );
 });
 
@@ -160,22 +185,26 @@ bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
     await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Успешно! Активна модель **Gemini 3.8 Flash**.');
+    ctx.reply('✅ Активна модель **Gemini 3.8 Flash**.');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
     await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Успешно! Активна премиум-модель **Nano Banana Pro**.');
+    ctx.reply('🧠 Активна премиум-модель **Nano Banana Pro**.');
 });
 
 bot.action('menu_buy', async (ctx) => {
     await ctx.answerCbQuery();
-    
+    const userId = ctx.from.id;
+    const balance = await getOrCreateUser(userId);
+
     ctx.reply(
-        `💳 *Пополнение баланса*\n\n` +
-        `Выберите пакет токенов:`,
+        `💳 *Личный кабинет и пополнение баланса*\n\n` +
+        `👤 ID: \`${userId}\`\n` +
+        `💰 Текущий баланс: *${balance} 🪙*\n\n` +
+        `Выберите пакет токенов для покупки:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -183,7 +212,7 @@ bot.action('menu_buy', async (ctx) => {
                 [Markup.button.callback('🪙 50 руб (10 токенов)', 'pay_50'), Markup.button.callback('🪙 100 руб (20 токенов)', 'pay_100')],
                 [Markup.button.callback('🪙 500 руб (100 токенов)', 'pay_500'), Markup.button.callback('🪙 1000 руб (200 токенов)', 'pay_1000')],
                 [Markup.button.callback('🚀 5000 руб (1000 токенов)', 'pay_5000')],
-                [Markup.button.callback('🔙 На главную', 'back_to_main')]
+                [Markup.button.callback('🔙 На главную', 'menu_main')]
             ])
         }
     );
@@ -197,39 +226,45 @@ bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generate
 bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
 bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
-bot.action('back_to_main', async (ctx) => {
+bot.action('menu_main', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
-    const balance = await getBalance(userId);
+    const balance = await getOrCreateUser(userId);
     const currentModelKey = userModels[userId] || 'flash';
+    
     ctx.reply(
-        `💰 Твой баланс: ${balance} 🪙\n🤖 Текущая модель: *${MODELS[currentModelKey].name}*`,
-        Markup.inlineKeyboard([
-            [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
-            [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
-            [Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]
-        ])
+        `🏠 Главное меню\n\n` +
+        `💰 Баланс: *${balance} 🪙*\n` +
+        `🤖 Модель: *${MODELS[currentModelKey].name}*`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
+                [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
+            ])
+        }
     );
 });
 
-// ПРОВЕРКА С ЗАЩИТОЙ ОТ ПОВТОРНОГО ИСПОЛЬЗОВАНИЯ ПЛАТЕЖА
+// ПРОВЕРКА ОПЛАТЫ С ЗАЩИТОЙ И СОХРАНЕНИЕМ В БАЗУ
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
 
-    await ctx.answerCbQuery('Проверяем платеж...');
+    await ctx.answerCbQuery('Проверяем платеж в системе...');
 
-    // Защита: проверяем, не был ли этот платеж уже использован раньше
+    // Защита от повторного использования чека
     const paymentRef = db.collection('processed_payments').doc(paymentId);
     const paymentDoc = await paymentRef.get();
 
     if (paymentDoc.exists) {
-        return ctx.reply('❌ Этот платеж уже был использован ранее! Повторно получить токены по нему нельзя.');
+        return ctx.reply('❌ Этот чек уже был активирован ранее! Повторно получить токены по нему нельзя.');
     }
 
     const paymentInfo = await checkPaymentStatus(paymentId);
     if (!paymentInfo) {
-        return ctx.reply('❌ Не удалось связаться с платежной системой. Попробуйте позже.');
+        return ctx.reply('❌ Не удалось связаться с ЮKassa. Попробуйте позже.');
     }
 
     // ЕСЛИ ОПЛАТИЛ УСПЕШНО
@@ -237,48 +272,52 @@ bot.action(/^check_(.+)$/, async (ctx) => {
         const coins = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
-        // Помечаем платеж как использованный в базе (защита от абуза)
+        // Фиксируем чек в базе, чтобы сжечь его от повторного юза
         await paymentRef.set({
             userId: userId,
             coins: coins,
             used_at: new Date()
         });
 
-        // Начисляем токены на баланс
+        // Начисляем токены НАПРЯМУЮ В FIRESTORE
         const newBalance = await updateBalance(userId, coins);
 
         return ctx.reply(
-            `✅ Вы успешно купили ${coins} токенов этой херни! (Сумма: ${amountPaid} руб.)\n` +
-            `🎉 Баланс успешно пополнен.\n` +
-            `💰 Ваш текущий баланс: ${newBalance} 🪙`
+            `✅ Успешная оплата!\n` +
+            `Вы купили ${coins} токенов этой херни (Сумма: ${amountPaid} руб.).\n` +
+            `🎉 Баланс в личном кабинете успешно пополнен!\n\n` +
+            `💰 Ваш текущий баланс: *${newBalance} 🪙*`,
+            { parse_mode: 'Markdown' }
         );
     } 
-    // ЕСЛИ НЕ ОПЛАТИЛ НИХУЯ
+    // ЕСЛИ НЕ ОПЛАТИЛ
     else {
         return ctx.reply(
-            `❌ Вы не оплатили нихуя! Платеж не найден или находится в статусе: ${paymentInfo.status}.\n` +
+            `❌ Вы не оплатили нихуя! Платеж не прошел или имеет статус: ${paymentInfo.status}.\n` +
             `Деньги не списаны, токены не начислены.`
         );
     }
 });
 
-// Обработка текстовых сообщений (общение с ИИ)
+// ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (Общение с ИИ с проверкой базы)
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
+    // Защита от левых типов: если пользователя нет в базе (не нажал /start), отправляем нахуй регистрироваться
+    const balance = await getOrCreateUser(userId, ctx.from.username);
+
     const modelKey = userModels[userId] || 'flash';
     const selectedModel = MODELS[modelKey];
-    const balance = await getBalance(userId);
 
     if (balance < selectedModel.cost) {
         return ctx.reply(
-            `❌ Недостаточно токенов на балансе!\n\n` +
+            `❌ Недостаточно токенов в личном кабинете!\n\n` +
             `🤖 Модель: ${selectedModel.name}\n` +
             `📉 Требуется: ${selectedModel.cost} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
-            `Пожалуйста, пополните баланс:`,
-            Markup.inlineKeyboard([[Markup.button.callback('💳 Пополнить баланс', 'menu_buy')]])
+            `Пожалуйста, пополните баланс в личном кабинете:`,
+            Markup.inlineKeyboard([[Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]])
         );
     }
 
@@ -289,9 +328,11 @@ bot.on('text', async (ctx) => {
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
+        
+        // Списываем токены прямо в базе данных Firestore
         const newBalance = await updateBalance(userId, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
+        ctx.reply(`${aiReply}\n\n*(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток в ЛК: ${newBalance} 🪙)*`, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
@@ -310,7 +351,7 @@ if (RENDER_EXTERNAL_URL) {
 }
 
 app.get('/', (req, res) => {
-    res.send('Server is running safely!');
+    res.send('Server is running with Firestore user profiles & payment check!');
 });
 
 app.listen(PORT, () => {
