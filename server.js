@@ -1,50 +1,81 @@
 const express = require('express');
+const { WebSocketServer } = require('ws');
+const http = require('http');
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
 
-// Разрешаем CORS для Тилды
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    res.header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+const users = {};
 
-// Ваш точный ключ API
+// Ваш актуальный ключ API
 const GEMINI_API_KEY = "AQ.Ab8RN6J-Eh5MOdZcZMBpaAduvIlEex5EvTB2-4oYF07uOtLk5A";
+
+// Инициализация клиента Google GenAI
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-const MODEL_NAME = "gemini-2.5-flash"; // Актуальная стабильная модель для SDK
 
-app.post('/chat', async (req, res) => {
-    const { message } = req.body;
-    if (!message) {
-        return res.status(400).json({ error: 'Пустое сообщение' });
+// Доступные модели (актуальные бесплатные версии)
+const DEFAULT_MODEL = "gemini-2.5-flash";
+
+wss.on('connection', (ws, req) => {
+    const urlParts = req.url.split('/');
+    const clientId = urlParts[urlParts.length - 1];
+
+    if (!users[clientId]) {
+        users[clientId] = { ws: ws, coins: 10, model: DEFAULT_MODEL };
+    } else {
+        users[clientId].ws = ws;
     }
 
-    try {
-        const response = await ai.models.generateContent({
-            model: MODEL_NAME,
-            contents: message,
-        });
+    ws.send(`COINS_UPDATE:${users[clientId].coins}`);
 
-        const reply = response.text || "Извините, не удалось получить ответ.";
-        res.json({ reply });
-    } catch (error) {
-        console.error("API Error:", error);
-        res.status(500).json({ error: error.message || 'Ошибка сервера' });
-    }
+    ws.on('message', async (message) => {
+        const text = message.toString().trim();
+        const user = users[clientId];
+
+        // Обработка переключения моделей
+        if (text.startsWith("SET_MODEL:")) {
+            const requestedModel = text.split(":")[1];
+            if (["gemini-2.5-flash", "gemini-2.5-pro"].includes(requestedModel)) {
+                user.model = requestedModel;
+                ws.send(`MODEL_UPDATED:${user.model}`);
+            }
+            return;
+        }
+
+        if (user.coins <= 0) {
+            ws.send("⚠️ У вас закончились монеты. Пополните баланс!");
+            return;
+        }
+
+        user.coins -= 1;
+        ws.send(`COINS_UPDATE:${user.coins}`);
+        ws.send("⏳ Думаю над ответом...");
+
+        try {
+            // Современный запрос к модели через SDK Google GenAI
+            const response = await ai.models.generateContent({
+                model: user.model,
+                contents: text
+            });
+
+            const aiReply = response.text || "Извините, не удалось получить ответ от ИИ.";
+            ws.send(aiReply);
+            
+        } catch (error) {
+            console.error("SDK Error details:", error);
+            ws.send(`❌ Ошибка API (${user.model}): ${error.message || 'Не удалось обработать запрос'}`);
+        }
+    });
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Backend is running!');
+    res.send('AI Studio WebSocket Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });
