@@ -10,10 +10,10 @@ const wss = new WebSocketServer({ server });
 
 const users = {}; 
 
-// Ваш актуальный ключ AQ.
-const GEMINI_API_KEY = "AQ.Ab8RN6JOey1V30lMFcrWrJBiMa3a1-KtxlbIRpTxnqjQOWYoJw";
+// Ваш новый актуальный ключ
+const GEMINI_API_KEY = "AQ.Ab8RN6KxbKwBa5hwD6WDEht-weNmDKeLi8cO06Nf-h-Zd8jJxw";
 
-// Доступные модели
+// Доступные модели для переключения из виджета
 const AVAILABLE_MODELS = {
     "flash": "gemini-1.5-flash",
     "flash2": "gemini-2.0-flash",
@@ -22,7 +22,7 @@ const AVAILABLE_MODELS = {
 
 wss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
-    const clientId = urlParts[urlParts.length - 1] || 'default-user';
+    const clientId = urlParts[urlParts.length - 1];
 
     if (!users[clientId]) {
         users[clientId] = { ws: ws, coins: 10, model: "gemini-flash-latest" };
@@ -36,7 +36,7 @@ wss.on('connection', (ws, req) => {
         const text = message.toString().trim();
         const user = users[clientId];
 
-        // Обработка смены модели
+        // Обработка переключения моделей с кнопок Тилды
         if (text.startsWith("SET_MODEL:")) {
             const modelKey = text.split(":")[1];
             if (AVAILABLE_MODELS[modelKey]) {
@@ -56,12 +56,12 @@ wss.on('connection', (ws, req) => {
         ws.send("⏳ Думаю над ответом...");
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent?key=${GEMINI_API_KEY}`;
-
-            const response = await fetch(url, {
+            // Используем ваш проверенный заголовок X-goog-api-key и выбранную модель
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${user.model}:generateContent`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
                 },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: text }] }]
@@ -87,7 +87,7 @@ wss.on('connection', (ws, req) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Tilda Backend is running!');
+    res.send('AI Studio Backend is running!');
 });
 
 const PORT = process.env.PORT || 3000;
