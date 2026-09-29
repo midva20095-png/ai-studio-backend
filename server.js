@@ -17,14 +17,16 @@ const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Полный каталог моделей с правильными ID и стоимостью в токенах
+// Полный актуальный каталог моделей и эндпоинтов Google по новой документации
 const MODELS = {
-    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-2.5-flash', cost: 12 },
-    'pro_3_1': { name: '🧠 Gemini 3.1 Pro (Thinking)', modelId: 'gemini-2.5-pro', cost: 25 },
-    'flash_lite': { name: '🚀 Gemini 3.1 Flash-Lite', modelId: 'gemini-2.5-flash-lite', cost: 8 },
-    'nano_banana': { name: '🎨 Nano Banana Pro', modelId: 'gemini-2.5-flash', cost: 15 },
-    'veo': { name: '🎬 Veo Video Generator', modelId: 'gemini-2.5-flash', cost: 50 },
-    'lyria': { name: '🎵 Lyria 3.5 Music', modelId: 'gemini-2.5-flash', cost: 35 }
+    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', cost: 12 },
+    'pro_3_1': { name: '🧠 Gemini 3.1 Pro (Thinking)', modelId: 'gemini-3.1-pro-preview', cost: 25 },
+    'flash_lite': { name: '🚀 Gemini 3.5 Flash-Lite', modelId: 'gemini-3.5-flash-lite', cost: 8 },
+    'nano_banana_2': { name: '🎨 Nano Banana 2 (Images)', modelId: 'gemini-3.1-flash-image', cost: 15 },
+    'nano_banana_pro': { name: '🍌 Nano Banana Pro', modelId: 'gemini-3-pro-image', cost: 20 },
+    'veo_3_1': { name: '🎬 Veo 3.1 Video Generator', modelId: 'veo-3.1-generate-preview', cost: 50 },
+    'lyria_3_5': { name: '🎵 Lyria 3.5 Music', modelId: 'lyria-3.5', cost: 35 },
+    'deep_research': { name: '🔍 Gemini Deep Research', modelId: 'deep-research-preview-04-2026', cost: 45 }
 };
 
 const userModels = {};
@@ -50,7 +52,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     
     const body = {
         amount: { value: `${amountRub}.00`, currency: 'RUB' },
-        confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' }, // Жестко указана ссылка без асинхронных сбоев
+        confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' },
         capture: true,
         description: `Покупка ${coinsCount} токенов (Сумма: ${amountRub} руб)`,
         metadata: { user_id: String(userId), coins: String(coinsCount) }
@@ -104,7 +106,7 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// Главное меню в виде аккуратной сетки кнопок
+// Главное меню с сеткой актуальных моделей и инструментов
 async function sendMainMenu(ctx, edit = false) {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
@@ -118,7 +120,7 @@ async function sendMainMenu(ctx, edit = false) {
         `🆔 Твой ID: \`${userId}\`\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n` +
         `⚙️ Инструмент: *${currentModel.name}* (${currentModel.cost} 🪙)\n\n` +
-        `Выберите нужный инструмент или модель:`;
+        `Выберите модель или инструмент для работы:`;
 
     const keyboard = Markup.inlineKeyboard([
         [
@@ -126,12 +128,16 @@ async function sendMainMenu(ctx, edit = false) {
             Markup.button.callback('🧠 Pro 3.1', 'set_model_pro_3_1')
         ],
         [
-            Markup.button.callback('🚀 Flash-Lite', 'set_model_flash_lite'),
-            Markup.button.callback('🎨 Nano Banana', 'set_model_nano_banana')
+            Markup.button.callback('🚀 Flash-Lite 3.5', 'set_model_flash_lite'),
+            Markup.button.callback('🎨 Nano Banana 2', 'set_model_nano_banana_2')
         ],
         [
-            Markup.button.callback('🎬 Veo Video', 'set_model_veo'),
-            Markup.button.callback('🎵 Lyria Music', 'set_model_lyria')
+            Markup.button.callback('🍌 Nano Banana Pro', 'set_model_nano_banana_pro'),
+            Markup.button.callback('🎬 Veo 3.1 Video', 'set_model_veo_3_1')
+        ],
+        [
+            Markup.button.callback('🎵 Lyria 3.5 Music', 'set_model_lyria_3_5'),
+            Markup.button.callback('🔍 Deep Research', 'set_model_deep_research')
         ],
         [
             Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')
@@ -160,9 +166,11 @@ const modelActions = {
     'set_model_flash_3_8': 'flash_3_8',
     'set_model_pro_3_1': 'pro_3_1',
     'set_model_flash_lite': 'flash_lite',
-    'set_model_nano_banana': 'nano_banana',
-    'set_model_veo': 'veo',
-    'set_model_lyria': 'lyria'
+    'set_model_nano_banana_2': 'nano_banana_2',
+    'set_model_nano_banana_pro': 'nano_banana_pro',
+    'set_model_veo_3_1': 'veo_3_1',
+    'set_model_lyria_3_5': 'lyria_3_5',
+    'set_model_deep_research': 'deep_research'
 };
 
 for (const [actionName, modelKey] of Object.entries(modelActions)) {
@@ -340,7 +348,7 @@ if (RENDER_EXTERNAL_URL) {
 }
 
 app.get('/', (req, res) => {
-    res.send('AI Studio Bot Server is running successfully!');
+    res.send('AI Studio Bot Server is running successfully with Gemini 3 models!');
 });
 
 app.listen(PORT, () => {
