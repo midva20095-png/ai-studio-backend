@@ -17,19 +17,19 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🤖 СПИСОК АКТУАЛЬНЫХ МОДЕЛЕЙ
+// 🤖 СПИСОК МОДЕЛЕЙ (Все добавленные сюда модели автоматически создают кнопки в меню)
 const MODELS = {
     'gemini_15_flash': { 
         name: 'Gemini Flash', 
-        modelId: 'gemini-3.8-flash', // Требование Google API из вашей ошибки
-        cost: 1,               // 1 кредит
+        modelId: 'gemini-3.8-flash', 
+        cost: 1,               // 1 запрос = 1 кредит (5 руб)
         maxInputChars: 3000,   
         maxOutputTokens: 1200  
     },
     'gemini_15_pro': { 
         name: 'Gemini Pro 3.1', 
-        modelId: 'gemini-3.1-pro-preview', // Актуальная Pro модель
-        cost: 3,               // 3 кредита
+        modelId: 'gemini-3.1-pro-preview', 
+        cost: 3,               // 1 запрос = 3 кредита (15 руб)
         maxInputChars: 8000,   
         maxOutputTokens: 2048  
     }
@@ -37,11 +37,11 @@ const MODELS = {
 
 // Хранение данных
 const userModels = {};
-const processedPayments = new Set(); // Защита от повторного начисления по одной ссылке
+const processedPayments = new Set(); 
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Фиксированная нижняя клавиатура
+// Постоянная клавиатура
 const mainReplyKeyboard = Markup.keyboard([
     ['🤖 Выбор модели', '💳 Личный кабинет']
 ]).resize();
@@ -67,7 +67,7 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// 2. ИНТЕГРАЦИЯ С ЮKASSA И СОЗДАНИЕ ССЫЛКИ
+// 2. ИНТЕГРАЦИЯ С ЮKASSA
 async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -111,7 +111,7 @@ async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
     }
 }
 
-// 🌐 АВТОМАТИЧЕСКИЙ ПРИЕМ УВЕДОМЛЕНИЙ ОБ ОПЛАТЕ ОТ ЮKASSA
+// WEBHOOK ЮKASSA
 app.post('/yookassa-webhook', async (req, res) => {
     try {
         const event = req.body.event;
@@ -155,8 +155,8 @@ bot.start(async (ctx) => {
     const safeUsername = escapeMarkdown(username);
     
     const balance = await callGoogleSheet('get', userId, username);
-    const activeModelKey = userModels[userId] || 'gemini_15_flash';
-    const activeModel = MODELS[activeModelKey];
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+    const activeModel = MODELS[activeModelKey] || MODELS['gemini_15_flash'];
 
     ctx.reply(
         `👋 Привет, ${safeUsername}!\n\n` +
@@ -171,24 +171,54 @@ bot.start(async (ctx) => {
     );
 });
 
-// Кнопки постоянного нижнего меню
+// 🤖 АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ КНОПОК ВЫБОРА МОДЕЛЕЙ
 bot.hears('🤖 Выбор модели', async (ctx) => {
     const userId = ctx.from.id;
-    const activeModelKey = userModels[userId] || 'gemini_15_flash';
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+
+    // Динамически создаем кнопки на основе всех ключей в MODELS
+    const buttons = Object.keys(MODELS).map((key) => {
+        const model = MODELS[key];
+        const isSelected = key === activeModelKey ? '✅ ' : '';
+        return [
+            Markup.button.callback(
+                `${isSelected}${model.name} (${model.cost} кр.)`,
+                `set_model_${key}`
+            )
+        ];
+    });
+
+    const activeModelName = MODELS[activeModelKey]?.name || 'Не выбрана';
 
     ctx.reply(
         `🤖 *Выберите языковую модель:*\n\n` +
-        `Текущая модель: *${escapeMarkdown(MODELS[activeModelKey].name)}*`,
+        `Текущая модель: *${escapeMarkdown(activeModelName)}*`,
         {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini Flash (1 кредит)', 'set_model_gemini_15_flash')],
-                [Markup.button.callback('🧠 Gemini Pro 3.1 (3 кредита)', 'set_model_gemini_15_pro')]
-            ])
+            ...Markup.inlineKeyboard(buttons)
         }
     );
 });
 
+// 🔄 УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ПЕРЕКЛЮЧЕНИЯ МОДЕЛЕЙ
+bot.action(/^set_model_(.+)$/, async (ctx) => {
+    const modelKey = ctx.match[1];
+
+    if (MODELS[modelKey]) {
+        userModels[ctx.from.id] = modelKey;
+        const selectedModel = MODELS[modelKey];
+
+        await ctx.answerCbQuery(`Выбрана модель: ${selectedModel.name}`);
+        ctx.reply(
+            `✅ Активна модель: *${escapeMarkdown(selectedModel.name)}* (${selectedModel.cost} кр. / запрос)`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        await ctx.answerCbQuery('❌ Модель не найдена');
+    }
+});
+
+// МЕНЮ ОПЛАТЫ
 bot.hears('💳 Личный кабинет', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
@@ -212,22 +242,7 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
     );
 });
 
-// Переключение моделей
-bot.action('set_model_gemini_15_flash', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'gemini_15_flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini Flash');
-    ctx.reply('✅ Активна модель: *Gemini Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
-});
-
-bot.action('set_model_gemini_15_pro', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'gemini_15_pro';
-    await ctx.answerCbQuery('Выбрана модель Gemini Pro 3.1');
-    ctx.reply('✅ Активна модель: *Gemini Pro 3.1* (3 кредита / запрос)', { parse_mode: 'Markdown' });
-});
-
-// Обработчики кнопок оплаты
+// Кнопки оплаты ЮKassa
 bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
 bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
 bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
@@ -235,15 +250,14 @@ bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generat
 bot.action('pay_2500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 2500, 500); });
 bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
-// 4. ОБРАБОТКА ИЗОБРАЖЕНИЙ (МУЛЬТИМОДАЛЬНЫЕ ЗАПРОСЫ)
+// 4. ОБРАБОТКА ИЗОБРАЖЕНИЙ
 bot.on('photo', async (ctx) => {
     const userId = ctx.from.id;
     const caption = (ctx.message.caption || '').trim();
 
-    const activeModelKey = userModels[userId] || 'gemini_15_flash';
-    const selectedModel = MODELS[activeModelKey];
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+    const selectedModel = MODELS[activeModelKey] || MODELS['gemini_15_flash'];
 
-    // ⛔ 1. ПРОВЕРКА БАЛАНСА ПОЛЬЗОВАТЕЛЯ
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
@@ -304,18 +318,16 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// 5. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ С ОГРАНИЧЕНИЯМИ
+// 5. ОБРАБОТКА ТЕКСТА
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
-    const activeModelKey = userModels[userId] || 'gemini_15_flash';
-    const selectedModel = MODELS[activeModelKey];
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+    const selectedModel = MODELS[activeModelKey] || MODELS['gemini_15_flash'];
 
-    // Игнорируем нажатия на системные кнопки
     if (text === '🤖 Выбор модели' || text === '💳 Личный кабинет') return;
 
-    // ⛔ 1. ПРОВЕРКА ДЛИНЫ ВХОДНОГО СООБЩЕНИЯ
     if (text.length > selectedModel.maxInputChars) {
         return ctx.reply(
             `⚠️ *Запрос слишком длинный!*\n\n` +
@@ -326,7 +338,6 @@ bot.on('text', async (ctx) => {
         );
     }
 
-    // ⛔ 2. ПРОВЕРКА БАЛАНСА ПОЛЬЗОВАТЕЛЯ
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
@@ -347,7 +358,6 @@ bot.on('text', async (ctx) => {
         const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         await ctx.sendChatAction('typing');
 
-        // ⛔ 3. ЗАПРОС К GEMINI С ОГРАНИЧЕНИЕМ НА ВЫХОД
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
