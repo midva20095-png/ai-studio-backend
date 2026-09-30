@@ -19,46 +19,46 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- НАСТРОЙКИ МОДЕЛЕЙ, ЦЕН И ЛИМИТОВ (1 монета = 5 рублей) ---
+// --- УТВЕРЖДЕННЫЕ ТАРИФЫ, ЛИМИТЫ И МОДЕЛИ (1 монета = 5 рублей) ---
 const MODELS = {
     'flash_3_8': { 
-        name: '⚡ Flash 3.8 / Flash-Lite (Быстрый чат)', 
+        name: '⚡ Flash 3.8 / Flash-Lite', 
         modelId: 'gemini-3.8-flash', 
         type: 'text', 
-        cost: 1,
+        cost: 1, // 5 ₽
         maxInputChars: 4000,
-        maxOutputTokens: 800
+        maxOutputTokens: 800 // эквивалент лимита на выход до 2000 символов
     },
     'pro_3_1': { 
-        name: '🧠 Pro 3.1 / Deep Research (Умный ИИ + Поиск)', 
-        modelId: 'gemini-2.5-pro', 
+        name: '🧠 Pro 3.1 / Deep Research', 
+        modelId: 'gemini-3.1-pro', 
         type: 'text', 
-        cost: 3,
+        cost: 3, // 15 ₽
         maxInputChars: 20000,
-        maxOutputTokens: 3200
+        maxOutputTokens: 3200 // эквивалент лимита на выход до 8000 символов
     },
     'nano_banana_2': { 
-        name: '🎨 Nano Banana 2 (HD качество)', 
+        name: '🎨 Nano Banana 2 (HD)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: 'HD quality, clear details, high resolution', 
-        cost: 2,
+        cost: 2, // 10 ₽
         maxInputChars: 800
     },
     'nano_banana_pro': { 
-        name: '🍌 Nano Banana Pro (Ultra-HD качество)', 
+        name: '🍌 Nano Banana Pro (Ultra-HD)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
-        cost: 4,
+        cost: 4, // 20 ₽
         maxInputChars: 800
     },
     'nano_banana_4k': { 
-        name: '💎 Nano Banana 4K (Премиум 4K фотореализм)', 
+        name: '💎 Nano Banana 4K (Премиум)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
-        cost: 10,
+        cost: 10, // 50 ₽
         maxInputChars: 800
     }
 };
@@ -189,11 +189,11 @@ bot.command('menu', sendMenu);
 
 bot.hears('🚀 Выбрать модель', (ctx) => {
     safeReply(ctx, '🤖 **Выберите нейросеть для работы:**', Markup.inlineKeyboard([
-        [Markup.button.callback('⚡ Flash 3.8 / Flash-Lite (1 🪙)', 'model_flash_3_8')],
-        [Markup.button.callback('🧠 Pro 3.1 / Поиск (3 🪙)', 'model_pro_3_1')],
-        [Markup.button.callback('🎨 Nano Banana 2 HD (2 🪙)', 'model_nano_banana_2')],
-        [Markup.button.callback('🍌 Nano Banana Pro Ultra-HD (4 🪙)', 'model_nano_banana_pro')],
-        [Markup.button.callback('💎 Nano Banana 4K (10 🪙)', 'model_nano_banana_4k')]
+        [Markup.button.callback('⚡ Flash 3.8 / Flash-Lite (1 🪙 | 5 ₽)', 'model_flash_3_8')],
+        [Markup.button.callback('🧠 Pro 3.1 / Deep Research (3 🪙 | 15 ₽)', 'model_pro_3_1')],
+        [Markup.button.callback('🎨 Nano Banana 2 HD (2 🪙 | 10 ₽)', 'model_nano_banana_2')],
+        [Markup.button.callback('🍌 Nano Banana Pro Ultra-HD (4 🪙 | 20 ₽)', 'model_nano_banana_pro')],
+        [Markup.button.callback('💎 Nano Banana 4K (10 🪙 | 50 ₽)', 'model_nano_banana_4k')]
     ]));
 });
 
@@ -276,10 +276,11 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userConfig = userState[userId];
     const modelData = MODELS[userConfig.model];
 
+    // Валидация лимита символов на входе
     if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(
             ctx, 
-            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса: **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
+            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
         );
     }
 
@@ -343,7 +344,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
     } catch (error) {
         console.error('Ошибка ИИ:', error);
-        await ctx.reply('⚠ Произошла ошибка при генерации. Монеты не были списаны.');
+        ctx.reply('⚠ Произошла ошибка при генерации. Монеты не были списаны.');
     } finally {
         isProcessing.delete(userId);
     }
