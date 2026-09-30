@@ -4,7 +4,6 @@ const { Telegraf, Markup, session } = require('telegraf');
 const axios = require('axios');
 const { GoogleGenAI } = require('@google/genai');
 
-// Инициализация официального SDK Google AI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -21,25 +20,25 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- ВАШИ ПЛАТНЫЕ МОДЕЛИ ---
+// --- ОБНОВЛЕННЫЕ МОДЕЛИ (Gemini 3.8 Flash, Gemini 3.1 Pro) ---
 const MODELS = {
     'flash_2_5': {
-        name: '⚡ Flash 2.5',
-        modelId: 'gemini-2.5-flash',
+        name: '⚡ Flash 3.8',
+        modelId: 'gemini-3.8-flash',
         type: 'text',
         cost: 1,
         maxInputChars: 4000
     },
     'pro_2_5': {
-        name: '🧠 Pro 2.5',
-        modelId: 'gemini-2.5-pro',
+        name: '🧠 Pro 3.1',
+        modelId: 'gemini-3.1-pro-preview',
         type: 'text',
         cost: 3,
         maxInputChars: 20000
     },
     'nano_banana_2_lite': {
         name: '🏎 Nano Banana 2 Lite',
-        modelId: 'gemini-3.1-flash-lite-image', // Эффективная и быстрая (низкая задержка)
+        modelId: 'imagen-3.0-fast-generate-001',
         type: 'image',
         cost: 1,
         maxInputChars: 800,
@@ -47,7 +46,7 @@ const MODELS = {
     },
     'nano_banana_2': {
         name: '🎨 Nano Banana 2',
-        modelId: 'gemini-3.1-flash-image', // Эффективная генерация графики
+        modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 2,
         maxInputChars: 800,
@@ -55,7 +54,7 @@ const MODELS = {
     },
     'nano_banana_pro': {
         name: '✨ Nano Banana Pro',
-        modelId: 'gemini-3-pro-image', // Природное создание контекстных изображений
+        modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 4,
         maxInputChars: 800,
@@ -73,7 +72,6 @@ const PAYMENT_PACKAGES = [
 const userState = {};
 const isProcessing = new Set();
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async function safeReply(ctx, text, extra = {}) {
     try {
         return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
@@ -97,7 +95,6 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// --- ЮKASSA ОПЛАТА ---
 async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -153,7 +150,6 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// --- КЛАВИАТУРА И МЕНЮ ---
 const mainMenuKeyboard = Markup.keyboard([
     ['🚀 Выбрать модель', '⚙️ Настройки'],
     ['💳 Баланс / Пополнить', 'ℹ️ Профиль']
@@ -167,8 +163,8 @@ bot.start((ctx) => {
 
 bot.hears('🚀 Выбрать модель', (ctx) => {
     safeReply(ctx, '🤖 **Выберите нейросеть:**', Markup.inlineKeyboard([
-        [Markup.button.callback('⚡ Flash 2.5 (1 🪙)', 'model_flash_2_5')],
-        [Markup.button.callback('🧠 Pro 2.5 (3 🪙)', 'model_pro_2_5')],
+        [Markup.button.callback('⚡ Flash 3.8 (1 🪙)', 'model_flash_2_5')],
+        [Markup.button.callback('🧠 Pro 3.1 (3 🪙)', 'model_pro_2_5')],
         [Markup.button.callback('🏎 Nano Banana 2 Lite (1 🪙)', 'model_nano_banana_2_lite')],
         [Markup.button.callback('🎨 Nano Banana 2 (2 🪙)', 'model_nano_banana_2')],
         [Markup.button.callback('✨ Nano Banana Pro (4 🪙)', 'model_nano_banana_pro')]
@@ -201,7 +197,7 @@ bot.hears('ℹ️ Профиль', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     const state = userState[userId] || { model: 'flash_2_5', aspect_ratio: '1:1' };
-    safeReply(ctx, `👤 **Ваш профиль**\n\n🆔 ID: \`${userId}\`\n💰 Баланс: ${balance} 🪙\n🤖 Модель: ${MODELS[state.model]?.name || 'Flash 2.5'}\n📐 Формат картинок: ${state.aspect_ratio}`);
+    safeReply(ctx, `👤 **Ваш профиль**\n\n🆔 ID: \`${userId}\`\n💰 Баланс: ${balance} 🪙\n🤖 Модель: ${MODELS[state.model]?.name || 'Flash 3.8'}\n📐 Формат картинок: ${state.aspect_ratio}`);
 });
 
 bot.action(/model_(.+)/, async (ctx) => {
@@ -227,7 +223,6 @@ bot.action(/^pay_(start|standard|lux|vip)$/, async (ctx) => {
     if (pkg) await generatePaymentLink(ctx, ctx.from.id, pkg.priceRub, pkg.coins);
 });
 
-// --- ОБРАБОТКА ИИ ---
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -240,17 +235,14 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userConfig = userState[userId];
     const modelData = MODELS[userConfig.model] || MODELS['flash_2_5'];
 
-    // Проверка лимитов текста
     if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(ctx, `⛔ **Превышен лимит символов!**\nМаксимум для ${modelData.name}: ${modelData.maxInputChars} симв.\nУ вас: ${promptText.length} симв.`);
     }
 
-    // Блокировка отправки фото в генератор картинок
     if (photoBuffer && modelData.type === 'image') {
-        return safeReply(ctx, `⚠️ **Внимание:** Для анализа прикрепленных фото используйте текстовые модели (*Flash 2.5* или *Pro 2.5*).\n\nМодели генерации изображений создают картинки только по тексту.`);
+        return safeReply(ctx, `⚠️ **Внимание:** Для анализа прикрепленных фото используйте текстовые модели (*Flash 3.8* или *Pro 3.1*).`);
     }
 
-    // Проверка баланса
     const balance = await callGoogleSheet('get', userId, username);
     if (balance === null) return ctx.reply('❌ Ошибка базы данных.');
     if (balance < modelData.cost) {
@@ -288,9 +280,8 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             const fullPrompt = `${promptText}. ${modelData.qualityPrompt}`;
             const ratio = userConfig.aspect_ratio || '1:1';
 
-            // ГЕНЕРАЦИЯ КАРТИНКИ С ИСПОЛЬЗОВАНИЕМ ВАШИХ ID
             const response = await ai.models.generateImages({
-                model: modelData.modelId, // Строго те ID, что вы указали (gemini-3.1-flash-image и др.)
+                model: modelData.modelId,
                 prompt: fullPrompt,
                 config: {
                     numberOfImages: 1,
@@ -298,6 +289,10 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
                     outputMimeType: 'image/jpeg'
                 }
             });
+
+            if (!response.generatedImages || response.generatedImages.length === 0) {
+                throw new Error('Модель не вернула изображение.');
+            }
 
             const imageBytes = response.generatedImages[0].image.imageBytes;
             const imgBuffer = Buffer.from(imageBytes, 'base64');
@@ -315,14 +310,12 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     }
 }
 
-// --- ПРИЕМ ТЕКСТА ---
 bot.on('text', async (ctx) => {
     const txt = ctx.message.text;
     if (txt.startsWith('/') || ['🚀 Выбрать модель', '⚙️ Настройки', '💳 Баланс / Пополнить', 'ℹ️ Профиль'].includes(txt)) return;
     await handleAIQuery(ctx, txt, null);
 });
 
-// --- ПРИЕМ ФОТО ---
 bot.on('photo', async (ctx) => {
     const photoArray = ctx.message.photo;
     const photo = photoArray[photoArray.length - 1];
@@ -337,7 +330,6 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- ЗАПУСК НА RENDER ---
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_EXTERNAL_URL) {
     const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
