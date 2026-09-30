@@ -20,7 +20,7 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- ОБНОВЛЕННЫЕ МОДЕЛИ (Gemini 3.8 Flash, Gemini 3.1 Pro) ---
+// --- МОДЕЛИ GEMINI 3.8 & IMAGEN 3 ---
 const MODELS = {
     'flash_2_5': {
         name: '⚡ Flash 3.8',
@@ -42,7 +42,7 @@ const MODELS = {
         type: 'image',
         cost: 1,
         maxInputChars: 800,
-        qualityPrompt: 'clear, fast generation'
+        qualityPrompt: 'clear, fast generation, detailed'
     },
     'nano_banana_2': {
         name: '🎨 Nano Banana 2',
@@ -50,7 +50,7 @@ const MODELS = {
         type: 'image',
         cost: 2,
         maxInputChars: 800,
-        qualityPrompt: 'high quality, detailed, clear focus'
+        qualityPrompt: 'high quality, detailed, clear focus, professional photography'
     },
     'nano_banana_pro': {
         name: '✨ Nano Banana Pro',
@@ -58,7 +58,7 @@ const MODELS = {
         type: 'image',
         cost: 4,
         maxInputChars: 800,
-        qualityPrompt: 'ultra-hd quality, highly detailed, 4k resolution, masterpiece'
+        qualityPrompt: 'ultra-hd quality, highly detailed, 4k resolution, masterpiece, photorealistic'
     }
 };
 
@@ -179,7 +179,9 @@ bot.hears('⚙️ Настройки', (ctx) => {
     safeReply(ctx, `⚙️ **Настройки пропорций изображений:**\nТекущий формат: **${r}**`, Markup.inlineKeyboard([
         [Markup.button.callback(`Квадрат (1:1) ${r === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
         [Markup.button.callback(`Широкий (16:9) ${r === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
-        [Markup.button.callback(`Вертикальный (9:16) ${r === '9:16' ? '✅' : ''}`, 'ratio_9:16')]
+        [Markup.button.callback(`Вертикальный (9:16) ${r === '9:16' ? '✅' : ''}`, 'ratio_9:16')],
+        [Markup.button.callback(`Портрет (3:4) ${r === '3:4' ? '✅' : ''}`, 'ratio_3:4')],
+        [Markup.button.callback(`Альбом (4:3) ${r === '4:3' ? '✅' : ''}`, 'ratio_4:3')]
     ]));
 });
 
@@ -267,7 +269,12 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
             const response = await ai.models.generateContent({
                 model: modelData.modelId,
-                contents: requestContents
+                contents: requestContents,
+                config: {
+                    thinkingConfig: {
+                        thinkingLevel: 'medium'
+                    }
+                }
             });
 
             const replyText = response.text || 'Ответ от ИИ пуст.';
@@ -280,6 +287,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             const fullPrompt = `${promptText}. ${modelData.qualityPrompt}`;
             const ratio = userConfig.aspect_ratio || '1:1';
 
+            // Вызов генерации согласно официальной документации Imagen 3
             const response = await ai.models.generateImages({
                 model: modelData.modelId,
                 prompt: fullPrompt,
@@ -291,14 +299,14 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             });
 
             if (!response.generatedImages || response.generatedImages.length === 0) {
-                throw new Error('Модель не вернула изображение.');
+                throw new Error('Модель не вернула готовое изображение.');
             }
 
             const imageBytes = response.generatedImages[0].image.imageBytes;
             const imgBuffer = Buffer.from(imageBytes, 'base64');
             
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const caption = `🖼 **Готово!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${ratio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${newBalance} 🪙_`;
+            const caption = `🖼 **Готово!**\n🤖 Модель: ${modelData.name}\n📐 Соотношение: ${ratio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${newBalance} 🪙_`;
             
             await ctx.replyWithPhoto({ source: imgBuffer }, { caption: caption, parse_mode: 'Markdown' });
         }
