@@ -22,11 +22,17 @@ const bot = new Telegraf(BOT_TOKEN);
 // Хранение выбранной модели для каждого пользователя
 const userModels = {};
 
-// Конфигурация моделей AI
+// Конфигурация моделей AI (исправлены modelId на актуальные)
 const MODELS = {
-    'flash': { name: '⚡ Gemini 2.5 Flash (Быстрая)', modelId: 'gemini-2.5-flash', cost: 1 },
-    'pro': { name: '🧠 Gemini 2.5 Pro (Мощная)', modelId: 'gemini-2.5-pro', cost: 5 }
+    'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
+    'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
 };
+
+// Функция экранирования специальных символов Markdown, чтобы имена вроде VLADONE_Ne не ломали Telegram
+function escapeMarkdown(text) {
+    if (!text) return '';
+    return String(text).replace(/[_*`\[\]()]/g, '\\$&');
+}
 
 // 1. ФУНКЦИЯ СВЯЗИ С GOOGLE ТАБЛИЦЕЙ
 async function callGoogleSheet(action, userId, username = '', amount = 0) {
@@ -108,21 +114,22 @@ async function checkPaymentStatus(paymentId) {
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
+    const safeUsername = escapeMarkdown(username);
     
     const balance = await callGoogleSheet('get', userId, username);
     const currentModelKey = userModels[userId] || 'flash';
 
     ctx.reply(
-        `👋 Привет, ${username}!\n\n` +
+        `👋 Привет, ${safeUsername}!\n\n` +
         `🆔 Твой ID: \`${userId}\`\n` +
         `💰 Баланс в таблице: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${MODELS[currentModelKey].name}*\n\n` +
+        `🤖 Модель: *${escapeMarkdown(MODELS[currentModelKey].name)}*\n\n` +
         `Выбирай модель или пополняй баланс:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 2.5 Flash (1 токен)', 'set_model_flash')],
-                [Markup.button.callback('🧠 Gemini 2.5 Pro (5 токенов)', 'set_model_pro')],
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
@@ -133,14 +140,14 @@ bot.action('set_model_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'flash';
     await ctx.answerCbQuery('Выбрана модель Gemini Flash');
-    ctx.reply('✅ Активна модель ⚡ Gemini 2.5 Flash.');
+    ctx.reply('✅ Активна модель ⚡ Gemini 3.8 Flash.');
 });
 
 bot.action('set_model_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'pro';
-    await ctx.answerCbQuery('Выбрана модель Gemini Pro');
-    ctx.reply('🧠 Активна модель 🧠 Gemini 2.5 Pro.');
+    await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
+    ctx.reply('🧠 Активна модель 🧠 Nano Banana Pro.');
 });
 
 bot.action('menu_buy', async (ctx) => {
@@ -181,12 +188,12 @@ bot.action('menu_main', async (ctx) => {
     ctx.reply(
         `🏠 *Главное меню*\n\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${MODELS[currentModelKey].name}*`,
+        `🤖 Модель: *${escapeMarkdown(MODELS[currentModelKey].name)}*`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 2.5 Flash (1 токен)', 'set_model_flash')],
-                [Markup.button.callback('🧠 Gemini 2.5 Pro (5 токенов)', 'set_model_pro')],
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
+                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
@@ -253,7 +260,7 @@ bot.on('text', async (ctx) => {
     if (balance < selectedModel.cost) {
         return ctx.reply(
             `❌ *Недостаточно токенов!*\n\n` +
-            `🤖 Модель: ${selectedModel.name}\n` +
+            `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
             `📉 Требуется: ${selectedModel.cost} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
             `Пополните баланс в личном кабинете:`,
@@ -276,7 +283,7 @@ bot.on('text', async (ctx) => {
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n_(${selectedModel.name} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)_`, {
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)_`, {
             parse_mode: 'Markdown'
         });
     } catch (error) {
