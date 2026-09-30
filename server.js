@@ -10,18 +10,12 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// — КОНФИГУРАЦИЯ И ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ —
-function requiredEnv(name) {
-    const value = process.env[name]?.trim();
-    if (!value) throw new Error(`Не задана обязательная переменная окружения: ${name}`);
-    return value;
-}
-
-const BOT_TOKEN = requiredEnv('BOT_TOKEN');
-const YUKASSA_SHOP_ID = requiredEnv('YUKASSA_SHOP_ID');
-const YUKASSA_SECRET_KEY = requiredEnv('YUKASSA_SECRET_KEY');
-const GOOGLE_SCRIPT_URL = requiredEnv('GOOGLE_SCRIPT_URL');
-const GEMINI_API_KEY = requiredEnv('GEMINI_API_KEY');
+// --- КОНФИГУРАЦИЯ С ТВОИМИ КЛЮЧАМИ ПО УМОЛЧАНИЮ ---
+const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
+const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''; // Если здесь нужен ключ, вставь его в кавычки
 
 // Инициализация Google GenAI SDK
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
@@ -303,12 +297,11 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// — ОСНОВНАЯ ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ (с защитой isProcessing и копированием state) —
+// — ОСНОВНАЯ ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ —
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
 
-    // Ранняя блокировка гонки запросов до любых await
     if (isProcessing.has(userId)) {
         return safeReply(ctx, '⏳ Предыдущий запрос еще выполняется.');
     }
@@ -319,7 +312,6 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         const state = { ...getUserState(userId) };
         const modelData = MODELS[state.model] || MODELS['flash_3_8'];
 
-        // 1. Проверка длины текста
         if (promptText && promptText.length > modelData.maxInputChars) {
             return safeReply(
                 ctx,
@@ -330,7 +322,6 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             );
         }
 
-        // 2. Проверка баланса
         const balance = await callGoogleSheet('get', userId, username);
         if (balance === null) return safeReply(ctx, '❌ Ошибка связи с базой данных.');
         if (balance < modelData.cost) {
