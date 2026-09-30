@@ -10,60 +10,45 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// --- КОНФИГУРАЦИЯ ---
-const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
-const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
-const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// — КОНФИГУРАЦИЯ И ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ —
+function requiredEnv(name) {
+    const value = process.env[name]?.trim();
+    if (!value) throw new Error(`Не задана обязательная переменная окружения: ${name}`);
+    return value;
+}
 
-// Инициализация Google GenAI SDK для текста
+const BOT_TOKEN = requiredEnv('BOT_TOKEN');
+const YUKASSA_SHOP_ID = requiredEnv('YUKASSA_SHOP_ID');
+const YUKASSA_SECRET_KEY = requiredEnv('YUKASSA_SECRET_KEY');
+const GOOGLE_SCRIPT_URL = requiredEnv('GOOGLE_SCRIPT_URL');
+const GEMINI_API_KEY = requiredEnv('GEMINI_API_KEY');
+
+// Инициализация Google GenAI SDK
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- МОДЕЛИ И ТАРИФЫ ---
-const MODELS = {
-    'flash_3_8': {
-        name: '⚡ Gemini 3.8 Flash',
-        modelId: 'gemini-2.5-flash',
-        type: 'text',
-        cost: 1,
-        maxInputChars: 8000,
-        maxOutputTokens: 2048
-    },
-    'pro_3_8': {
-        name: '🧠 Gemini 3.8 Pro',
-        modelId: 'gemini-2.5-pro',
-        type: 'text',
-        cost: 3,
-        maxInputChars: 30000,
-        maxOutputTokens: 4096
-    },
-    'nano_banana_2_lite': {
-        name: '🏎 Nano Banana 2 Lite',
-        modelId: 'imagen-3.0-fast-generate-001',
-        type: 'image',
-        cost: 1,
-        maxInputChars: 800,
-        qualityPrompt: 'fast render, clear, detailed'
-    },
-    'nano_banana_2': {
-        name: '🎨 Nano Banana 2',
-        modelId: 'imagen-3.0-generate-002',
-        type: 'image',
-        cost: 2,
-        maxInputChars: 800,
-        qualityPrompt: 'high quality, detailed, professional photography, vivid colors'
-    },
-    'nano_banana_pro': {
-        name: '✨ Nano Banana Pro',
-        modelId: 'imagen-3.0-generate-002',
-        type: 'image',
-        cost: 4,
-        maxInputChars: 800,
-        qualityPrompt: 'masterpiece, ultra-hd, highly detailed, 8k resolution, photorealistic'
+// Глобальный перехватчик ошибок Telegraf
+bot.catch((err, ctx) => {
+    const code = err.response?.error_code ?? err.code;
+    if (Number(code) === 403) {
+        console.warn(`[Bot Blocked] Пользователь ${ctx.from?.id} заблокировал бота.`);
+        return;
     }
+    console.error('Ошибка в обработчике Telegram:', {
+        updateId: ctx.update?.update_id,
+        code,
+        message: err.message
+    });
+});
+
+// — АКТУАЛЬНЫЕ МОДЕЛИ И ТАРИФЫ —
+const MODELS = {
+    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', type: 'text', cost: 1, maxInputChars: 8000, maxOutputTokens: 2048 },
+    'pro_3_8': { name: '🧠 Gemini 3.8 Pro', modelId: 'gemini-3.8-pro', type: 'text', cost: 3, maxInputChars: 30000, maxOutputTokens: 4096 },
+    'nano_banana_2_lite': { name: '🏎 Nano Banana 2 Lite', modelId: 'gemini-3.1-flash-lite-image', type: 'image', cost: 1, maxInputChars: 800 },
+    'nano_banana_2': { name: '🎨 Nano Banana 2', modelId: 'gemini-3.1-flash-image', type: 'image', cost: 2, maxInputChars: 800 },
+    'nano_banana_pro': { name: '✨ Nano Banana Pro', modelId: 'gemini-3-pro-image', type: 'image', cost: 4, maxInputChars: 800 }
 };
 
 const PAYMENT_PACKAGES = [
@@ -93,13 +78,12 @@ function getUserState(userId) {
     return userState[userId];
 }
 
-// Защищенная отправка сообщений (не падает при блокировке бота)
+// Защищенная отправка сообщений
 async function safeReply(ctx, text, extra = {}) {
     try {
         return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
     } catch (e) {
-        if (e.response && e.response.error_code === 403) {
-            console.warn(`[Bot Blocked] Пользователь ${ctx.from?.id} заблокировал бота.`);
+        if (e.response && (e.response.error_code === 403 || e.code === 403)) {
             return null;
         }
         try {
@@ -122,14 +106,70 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
             username,
             amount
         }, { timeout: 8000 });
-        return response.data?.balance ?? null;
+        
+        const balance = response.data?.balance;
+        return typeof balance === 'number' ? balance : null;
     } catch (error) {
         console.error('Ошибка Google Sheets API:', error.message);
         return null;
     }
 }
 
-// --- КЛАВИАТУРЫ И РОУТИНГ ---
+// — ФУНКЦИЯ ГЕНЕРАЦИИ КАРТИНОК ЧЕРЕЗ GEMINI (generateContent) —
+async function generateGeminiImage({ modelId, prompt, aspectRatio = '1:1', photoBuffer = null }) {
+    const allowedRatios = new Set(['1:1', '16:9', '9:16']);
+    const safeAspectRatio = allowedRatios.has(aspectRatio) ? aspectRatio : '1:1';
+
+    const parts = [{
+        text: prompt?.trim() || (photoBuffer ? 'Создай новое изображение на основе приложенного.' : 'Создай изображение.')
+    }];
+
+    if (photoBuffer) {
+        parts.push({
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: photoBuffer.toString('base64')
+            }
+        });
+    }
+
+    const response = await ai.models.generateContent({
+        model: modelId,
+        contents: [{ role: 'user', parts }],
+        config: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            imageConfig: {
+                aspectRatio: safeAspectRatio
+            }
+        }
+    });
+
+    const candidate = response.candidates?.[0];
+    const resultParts = candidate?.content?.parts || [];
+
+    const imagePart = resultParts.find(part =>
+        !part.thought &&
+        part.inlineData?.data &&
+        part.inlineData?.mimeType?.startsWith('image/')
+    );
+
+    if (!imagePart) {
+        const explanation = resultParts
+            .filter(part => !part.thought && part.text)
+            .map(part => part.text)
+            .join('\n');
+
+        const reason = response.promptFeedback?.blockReason || candidate?.finishReason || 'NO_IMAGE';
+        throw new Error(`Google не вернул изображение (${reason}). ${explanation.slice(0, 300)}`);
+    }
+
+    return {
+        buffer: Buffer.from(imagePart.inlineData.data, 'base64'),
+        mimeType: imagePart.inlineData.mimeType
+    };
+}
+
+// — КЛАВИАТУРЫ И РОУТИНГ —
 const mainKeyboard = Markup.keyboard([
     [MENU_BUTTONS.SELECT, MENU_BUTTONS.SETTINGS],
     [MENU_BUTTONS.BALANCE, MENU_BUTTONS.PROFILE]
@@ -137,7 +177,7 @@ const mainKeyboard = Markup.keyboard([
 
 bot.start((ctx) => {
     getUserState(ctx.from.id);
-    safeReply(ctx, '👋 **Добро пожаловать в AI Studio!**\n\nВыберите модель кнопкой ниже и отправьте запрос.', mainKeyboard);
+    safeReply(ctx, '👋 Добро пожаловать в AI Studio!\n\nВыберите модель кнопкой ниже и отправьте запрос.', mainKeyboard);
 });
 
 bot.hears(MENU_BUTTONS.SELECT, (ctx) => {
@@ -145,7 +185,7 @@ bot.hears(MENU_BUTTONS.SELECT, (ctx) => {
         const m = MODELS[k];
         return [Markup.button.callback(`${m.name} — ${m.cost} 🪙`, `model_${k}`)];
     });
-    safeReply(ctx, '🤖 **Доступные нейросети:**', Markup.inlineKeyboard(buttons));
+    safeReply(ctx, '🤖 Доступные нейросети:', Markup.inlineKeyboard(buttons));
 });
 
 bot.hears(MENU_BUTTONS.SETTINGS, (ctx) => {
@@ -179,11 +219,11 @@ bot.hears(MENU_BUTTONS.PROFILE, async (ctx) => {
     );
 });
 
-// --- CALLBACK ОБРАБОТЧИКИ ---
+// — CALLBACK ОБРАБОТЧИКИ —
 bot.action(/^model_(.+)$/, async (ctx) => {
     const key = ctx.match[1];
     if (!MODELS[key]) return ctx.answerCbQuery('❌ Модель не найдена').catch(() => {});
-    
+
     const state = getUserState(ctx.from.id);
     state.model = key;
     const m = MODELS[key];
@@ -244,7 +284,7 @@ bot.action(/^pay_(.+)$/, async (ctx) => {
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    await ctx.answerCbQuery('Проверка...').catch(() => {});
+    await ctx.answerCbQuery('Проверка…').catch(() => {});
 
     try {
         const res = await axios.get(`https://api.yookassa.ru/v3/payments/${paymentId}`, {
@@ -263,7 +303,7 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// --- ОСНОВНАЯ ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ ---
+// — ОСНОВНАЯ ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ (с защитой isProcessing и копированием state) —
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -272,35 +312,30 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         return safeReply(ctx, '⏳ Предыдущий запрос еще выполняется.');
     }
 
-    const state = getUserState(userId);
-    const modelData = MODELS[state.model] || MODELS['flash_3_8'];
-
-    // 1. Проверка длины текста
-    if (promptText && promptText.length > modelData.maxInputChars) {
-        return safeReply(
-            ctx,
-            `⛔ **Превышен лимит длины запроса!**\n\n` +
-            `Модель: **${modelData.name}**\n` +
-            `Максимум: **${modelData.maxInputChars}** символов\n` +
-            `Ваш запрос: **${promptText.length}** символов`
-        );
-    }
-
-    // 2. Проверка совместимости фото
-    if (photoBuffer && modelData.type === 'image') {
-        return safeReply(ctx, `⚠️ Генераторы картинок не принимают фото на вход. Для анализа фотографий выберите текстовую модель.`);
-    }
-
-    // 3. Проверка баланса
-    const balance = await callGoogleSheet('get', userId, username);
-    if (balance === null) return safeReply(ctx, '❌ Ошибка связи с базой данных.');
-    if (balance < modelData.cost) {
-        return safeReply(ctx, `❌ **Недостаточно монет.**\nСтоимость запроса: ${modelData.cost} 🪙\nВаш баланс: ${balance} 🪙`);
-    }
-
     isProcessing.add(userId);
 
     try {
+        const state = { ...getUserState(userId) };
+        const modelData = MODELS[state.model] || MODELS['flash_3_8'];
+
+        // 1. Проверка длины текста
+        if (promptText && promptText.length > modelData.maxInputChars) {
+            return safeReply(
+                ctx,
+                `⛔ **Превышен лимит длины запроса!**\n\n` +
+                `Модель: **${modelData.name}**\n` +
+                `Максимум: **${modelData.maxInputChars}** символов\n` +
+                `Ваш запрос: **${promptText.length}** символов`
+            );
+        }
+
+        // 2. Проверка баланса
+        const balance = await callGoogleSheet('get', userId, username);
+        if (balance === null) return safeReply(ctx, '❌ Ошибка связи с базой данных.');
+        if (balance < modelData.cost) {
+            return safeReply(ctx, `❌ **Недостаточно монет.**\nСтоимость запроса: ${modelData.cost} 🪙\nВаш баланс: ${balance} 🪙`);
+        }
+
         if (modelData.type === 'text') {
             try { await ctx.sendChatAction('typing'); } catch (e) {}
 
@@ -329,23 +364,14 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         } else if (modelData.type === 'image') {
             try { await ctx.sendChatAction('upload_photo'); } catch (e) {}
 
-            const fullPrompt = promptText ? `${promptText}. ${modelData.qualityPrompt}` : modelData.qualityPrompt;
+            // Генерация картинок через единый метод generateContent (поддерживает текст и входящие фото)
+            const { buffer: imgBuffer } = await generateGeminiImage({
+                modelId: modelData.modelId,
+                prompt: promptText,
+                aspectRatio: state.aspect_ratio || '1:1',
+                photoBuffer
+            });
 
-            // Прямой запрос к Google Imagen API (:predict)
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelData.modelId}:predict?key=${GEMINI_API_KEY}`;
-            const res = await axios.post(url, {
-                instances: [{ prompt: fullPrompt }],
-                parameters: {
-                    sampleCount: 1,
-                    aspectRatio: state.aspect_ratio || '1:1',
-                    outputOptions: { mimeType: 'image/jpeg' }
-                }
-            }, { timeout: 45000 });
-
-            const base64Bytes = res.data?.predictions?.[0]?.bytesBase64Encoded;
-            if (!base64Bytes) throw new Error('API не вернуло байты изображения.');
-
-            const imgBuffer = Buffer.from(base64Bytes, 'base64');
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
             const balanceStr = newBalance !== null ? newBalance : (balance - modelData.cost);
 
@@ -358,11 +384,11 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
                     }
                 );
             } catch (err) {
-                console.warn('[Bot Blocked] Не удалось отправить фото:', err.message);
+                console.warn('Не удалось отправить сгенерированное фото:', err.message);
             }
         }
     } catch (err) {
-        console.error('Ошибка API Google:', err.response?.data || err.message);
+        console.error('Ошибка API Google / Обработки:', err.response?.data || err.message);
         let userErrMsg = err.message || 'Сбой сервиса Google API';
         if (err.response?.data?.error?.message) {
             userErrMsg = err.response.data.error.message;
@@ -373,7 +399,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     }
 }
 
-// --- СЛУШАТЕЛИ СООБЩЕНИЙ ---
+// — СЛУШАТЕЛИ СООБЩЕНИЙ —
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
     if (text.startsWith('/') || Object.values(MENU_BUTTONS).includes(text)) return;
@@ -394,7 +420,7 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- СЕРВЕР И ВЕБХУК ---
+// — СЕРВЕР И ВЕБХУК —
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_EXTERNAL_URL) {
     let webhookPath;
