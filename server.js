@@ -23,7 +23,7 @@ bot.use(session());
 const MODELS = {
     'flash_3_8': { 
         name: '⚡ Flash 3.8 / Flash-Lite (Быстрый чат)', 
-        modelId: 'gemini-2.5-flash', 
+        modelId: 'gemini-3.8-flash', 
         type: 'text', 
         cost: 1,
         maxInputChars: 4000,
@@ -76,11 +76,9 @@ const RATIO_PROMPTS = {
     '9:16': 'vertical aspect ratio 9:16 portrait mobile format'
 };
 
-// Хранилище состояний пользователей
 const userState = {};
 const isProcessing = new Set();
 
-// Безопасная отправка текстовых сообщений (защита от ошибок парсинга Markdown)
 async function safeReply(ctx, text, extra = {}) {
     try {
         return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
@@ -89,7 +87,6 @@ async function safeReply(ctx, text, extra = {}) {
     }
 }
 
-// Безопасная отправка изображений
 async function safeReplyWithPhoto(ctx, photoBuffer, caption, extra = {}) {
     try {
         return await ctx.replyWithPhoto({ source: photoBuffer }, { caption: caption, parse_mode: 'Markdown', ...extra });
@@ -98,7 +95,6 @@ async function safeReplyWithPhoto(ctx, photoBuffer, caption, extra = {}) {
     }
 }
 
-// --- Взаимодействие с Google Таблицей ---
 async function callGoogleSheet(action, userId, username = '', amount = 0) {
     try {
         const response = await axios.post(GOOGLE_SCRIPT_URL, {
@@ -114,7 +110,6 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// --- ЮKassa: Создание платежа ---
 async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -150,7 +145,6 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
     }
 }
 
-// --- ЮKassa: Проверка платежа ---
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -174,7 +168,6 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// --- Главное меню ---
 const mainMenuKeyboard = Markup.keyboard([
     ['🚀 Выбрать модель', '⚙️ Настройки'],
     ['💳 Баланс / Пополнить', 'ℹ️ Профиль']
@@ -194,7 +187,6 @@ const sendMenu = async (ctx) => {
 bot.start(sendMenu);
 bot.command('menu', sendMenu);
 
-// --- Обработка нижнего меню ---
 bot.hears('🚀 Выбрать модель', (ctx) => {
     safeReply(ctx, '🤖 **Выберите нейросеть для работы:**', Markup.inlineKeyboard([
         [Markup.button.callback('⚡ Flash 3.8 / Flash-Lite (1 🪙)', 'model_flash_3_8')],
@@ -205,7 +197,7 @@ bot.hears('🚀 Выбрать модель', (ctx) => {
     ]));
 });
 
-bot.hears('⚙️️ Настройки', (ctx) => {
+bot.hears('⚙️ Настройки', (ctx) => {
     const userId = ctx.from.id;
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const currentRatio = userState[userId].aspect_ratio;
@@ -243,7 +235,6 @@ bot.hears('ℹ️ Профиль', async (ctx) => {
     );
 });
 
-// --- Обработка инлайн-кнопок моделей и настроек ---
 bot.action(/model_(.+)/, async (ctx) => {
     const modelKey = ctx.match[1];
     if (!MODELS[modelKey]) return ctx.answerCbQuery('❌ Модель не найдена');
@@ -264,7 +255,6 @@ bot.action(/ratio_(.+)/, async (ctx) => {
     await ctx.editMessageText(`✅ Формат генерации изображений установлен на: **${ratio}**`, { parse_mode: 'Markdown' });
 });
 
-// --- Обработка кнопок оплаты ---
 bot.action(/^pay_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const amount = parseInt(ctx.match[1]);
@@ -274,7 +264,6 @@ bot.action(/^pay_(\d+)$/, async (ctx) => {
     await generatePaymentLink(ctx, ctx.from.id, packageInfo.priceRub, packageInfo.coins);
 });
 
-// --- Основная логика работы с ИИ ---
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -287,7 +276,6 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userConfig = userState[userId];
     const modelData = MODELS[userConfig.model];
 
-    // Валидация лимита символов
     if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(
             ctx, 
@@ -380,7 +368,6 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// Webhook для Render
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_EXTERNAL_URL) {
     const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
