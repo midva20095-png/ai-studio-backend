@@ -1,48 +1,93 @@
+'use strict';
+
 const express = require('express');
 const cors = require('cors');
-const { Telegraf, Markup, session } = require('telegraf');
 const axios = require('axios');
+const { Telegraf, Markup, session } = require('telegraf');
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = Number(process.env.PORT || 10000);
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// --- КОНФИГУРАЦИЯ С ТВОИМИ КЛЮЧАМИ ПО УМОЛЧАНИЮ ---
-const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
-const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
-const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''; // Если здесь нужен ключ, вставь его в кавычки
+// --------------------------------------------------
+// ОБЯЗАТЕЛЬНЫЕ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+// --------------------------------------------------
 
-// Инициализация Google GenAI SDK
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-const bot = new Telegraf(BOT_TOKEN);
-bot.use(session());
+function requiredEnv(name) {
+    const value = process.env[name]?.trim();
 
-// Глобальный перехватчик ошибок Telegraf
-bot.catch((err, ctx) => {
-    const code = err.response?.error_code ?? err.code;
-    if (Number(code) === 403) {
-        console.warn(`[Bot Blocked] Пользователь ${ctx.from?.id} заблокировал бота.`);
-        return;
+    if (!value) {
+        throw new Error(`Не задана обязательная переменная окружения: ${name}`);
     }
-    console.error('Ошибка в обработчике Telegram:', {
-        updateId: ctx.update?.update_id,
-        code,
-        message: err.message
-    });
+
+    return value;
+}
+
+const BOT_TOKEN = requiredEnv('BOT_TOKEN');
+const YUKASSA_SHOP_ID = requiredEnv('YUKASSA_SHOP_ID');
+const YUKASSA_SECRET_KEY = requiredEnv('YUKASSA_SECRET_KEY');
+const GOOGLE_SCRIPT_URL = requiredEnv('GOOGLE_SCRIPT_URL');
+const GEMINI_API_KEY = requiredEnv('GEMINI_API_KEY');
+
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL?.trim();
+
+const ai = new GoogleGenAI({
+    apiKey: GEMINI_API_KEY
 });
 
-// — АКТУАЛЬНЫЕ МОДЕЛИ И ТАРИФЫ —
+const bot = new Telegraf(BOT_TOKEN);
+
+bot.use(session());
+
+// --------------------------------------------------
+// МОДЕЛИ
+// --------------------------------------------------
+
 const MODELS = {
-    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', type: 'text', cost: 1, maxInputChars: 8000, maxOutputTokens: 2048 },
-    'pro_3_8': { name: '🧠 Gemini 3.8 Pro', modelId: 'gemini-3.8-pro', type: 'text', cost: 3, maxInputChars: 30000, maxOutputTokens: 4096 },
-    'nano_banana_2_lite': { name: '🏎 Nano Banana 2 Lite', modelId: 'gemini-3.1-flash-lite-image', type: 'image', cost: 1, maxInputChars: 800 },
-    'nano_banana_2': { name: '🎨 Nano Banana 2', modelId: 'gemini-3.1-flash-image', type: 'image', cost: 2, maxInputChars: 800 },
-    'nano_banana_pro': { name: '✨ Nano Banana Pro', modelId: 'gemini-3-pro-image', type: 'image', cost: 4, maxInputChars: 800 }
+    flash_text: {
+        name: '⚡ Gemini Flash',
+        modelId: 'gemini-3.1-flash-lite',
+        type: 'text',
+        cost: 1,
+        maxInputChars: 8000,
+        maxOutputTokens: 2048
+    },
+
+    pro_text: {
+        name: '🧠 Gemini Pro',
+        modelId: 'gemini-3.1-pro-preview',
+        type: 'text',
+        cost: 3,
+        maxInputChars: 30000,
+        maxOutputTokens: 4096
+    },
+
+    nano_banana_2_lite: {
+        name: '🏎 Nano Banana 2 Lite',
+        modelId: 'gemini-3.1-flash-lite-image',
+        type: 'image',
+        cost: 1,
+        maxInputChars: 800
+    },
+
+    nano_banana_2: {
+        name: '🎨 Nano Banana 2',
+        modelId: 'gemini-3.1-flash-image',
+        type: 'image',
+        cost: 2,
+        maxInputChars: 2000
+    },
+
+    nano_banana_pro: {
+        name: '✨ Nano Banana Pro',
+        modelId: 'gemini-3-pro-image',
+        type: 'image',
+        cost: 4,
+        maxInputChars: 3000
+    }
 };
 
 const PAYMENT_PACKAGES = [
@@ -59,64 +104,560 @@ const MENU_BUTTONS = {
     PROFILE: 'ℹ️ Профиль'
 };
 
-const userState = {};
-const isProcessing = new Set();
+const userState = new Map();
+const processingUsers = new Set();
+
+const ALLOWED_RATIOS = new Set([
+    '1:1',
+    '16:9',
+    '9:16',
+    '4:3',
+    '3:4'
+]);
 
 function getUserState(userId) {
-    if (!userState[userId]) {
-        userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    if (!userState.has(userId)) {
+        userState.set(userId, {
+            model: 'flash_text',
+            aspectRatio: '1:1'
+        });
     }
-    if (!MODELS[userState[userId].model]) {
-        userState[userId].model = 'flash_3_8';
+
+    const state = userState.get(userId);
+
+    if (!MODELS[state.model]) {
+        state.model = 'flash_text';
     }
-    return userState[userId];
+
+    if (!ALLOWED_RATIOS.has(state.aspectRatio)) {
+        state.aspectRatio = '1:1';
+    }
+
+    return state;
 }
 
-// Защищенная отправка сообщений
+// --------------------------------------------------
+// TELEGRAM HELPERS
+// --------------------------------------------------
+
+function isTelegramBlockedError(error) {
+    const errorCode =
+        error?.response?.error_code ??
+        error?.code ??
+        error?.response?.status;
+
+    return Number(errorCode) === 403;
+}
+
 async function safeReply(ctx, text, extra = {}) {
     try {
-        return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
-    } catch (e) {
-        if (e.response && (e.response.error_code === 403 || e.code === 403)) {
-            return null;
-        }
-        try {
-            const cleanExtra = { ...extra };
-            delete cleanExtra.parse_mode;
-            return await ctx.reply(text, cleanExtra);
-        } catch (innerErr) {
-            console.error('Ошибка отправки сообщения Telegram:', innerErr.message);
-            return null;
-        }
-    }
-}
-
-// Запрос к Google Таблицам
-async function callGoogleSheet(action, userId, username = '', amount = 0) {
-    try {
-        const response = await axios.post(GOOGLE_SCRIPT_URL, {
-            action,
-            userId: String(userId),
-            username,
-            amount
-        }, { timeout: 8000 });
-        
-        const balance = response.data?.balance;
-        return typeof balance === 'number' ? balance : null;
+        return await ctx.reply(text, extra);
     } catch (error) {
-        console.error('Ошибка Google Sheets API:', error.message);
+        if (isTelegramBlockedError(error)) {
+            console.warn(
+                `[Telegram 403] Пользователь заблокировал бота: ${ctx.from?.id}`
+            );
+            return null;
+        }
+
+        console.error(
+            'Ошибка отправки сообщения Telegram:',
+            error.message
+        );
+
         return null;
     }
 }
 
-// — ФУНКЦИЯ ГЕНЕРАЦИИ КАРТИНОК ЧЕРЕЗ GEMINI (generateContent) —
-async function generateGeminiImage({ modelId, prompt, aspectRatio = '1:1', photoBuffer = null }) {
-    const allowedRatios = new Set(['1:1', '16:9', '9:16']);
-    const safeAspectRatio = allowedRatios.has(aspectRatio) ? aspectRatio : '1:1';
+async function safeAnswerCallback(ctx, text = '') {
+    try {
+        return await ctx.answerCbQuery(text);
+    } catch (error) {
+        if (!isTelegramBlockedError(error)) {
+            console.warn(
+                'Ошибка answerCbQuery:',
+                error.message
+            );
+        }
 
-    const parts = [{
-        text: prompt?.trim() || (photoBuffer ? 'Создай новое изображение на основе приложенного.' : 'Создай изображение.')
-    }];
+        return null;
+    }
+}
+
+async function safeEditMessage(ctx, text, extra = {}) {
+    try {
+        return await ctx.editMessageText(text, extra);
+    } catch (error) {
+        if (!isTelegramBlockedError(error)) {
+            console.warn(
+                'Ошибка редактирования Telegram-сообщения:',
+                error.message
+            );
+        }
+
+        return null;
+    }
+}
+
+async function safeSendPhoto(ctx, buffer, extra = {}) {
+    try {
+        return await ctx.replyWithPhoto(
+            { source: buffer },
+            extra
+        );
+    } catch (error) {
+        if (isTelegramBlockedError(error)) {
+            console.warn(
+                `[Telegram 403] Невозможно отправить фото пользователю: ${ctx.from?.id}`
+            );
+            return null;
+        }
+
+        console.error(
+            'Ошибка отправки изображения в Telegram:',
+            error.message
+        );
+
+        return null;
+    }
+}
+
+// --------------------------------------------------
+// GOOGLE SHEETS
+// --------------------------------------------------
+
+async function callGoogleSheet(
+    action,
+    userId,
+    username = '',
+    amount = 0,
+    paymentId = ''
+) {
+    try {
+        const response = await axios.post(
+            GOOGLE_SCRIPT_URL,
+            {
+                action,
+                userId: String(userId),
+                username: username || '',
+                amount: Number(amount) || 0,
+                paymentId: paymentId || ''
+            },
+            {
+                timeout: 10000,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const rawBalance = response.data?.balance;
+
+        if (rawBalance === undefined || rawBalance === null) {
+            return null;
+        }
+
+        const balance = Number(rawBalance);
+
+        return Number.isFinite(balance) ? balance : null;
+    } catch (error) {
+        console.error(
+            'Ошибка Google Sheets:',
+            error.response?.data || error.message
+        );
+
+        return null;
+    }
+}
+
+// --------------------------------------------------
+// КЛАВИАТУРЫ
+// --------------------------------------------------
+
+const mainKeyboard = Markup.keyboard([
+    [MENU_BUTTONS.SELECT, MENU_BUTTONS.SETTINGS],
+    [MENU_BUTTONS.BALANCE, MENU_BUTTONS.PROFILE]
+]).resize();
+
+// --------------------------------------------------
+// START
+// --------------------------------------------------
+
+bot.start(async (ctx) => {
+    getUserState(ctx.from.id);
+
+    await safeReply(
+        ctx,
+        [
+            '👋 Добро пожаловать в AI Studio!',
+            '',
+            'Выберите модель и отправьте запрос.'
+        ].join('\n'),
+        mainKeyboard
+    );
+});
+
+// --------------------------------------------------
+// ВЫБОР МОДЕЛИ
+// --------------------------------------------------
+
+bot.hears(MENU_BUTTONS.SELECT, async (ctx) => {
+    const buttons = Object.entries(MODELS).map(([key, model]) => {
+        return [
+            Markup.button.callback(
+                `${model.name} — ${model.cost} 🪙`,
+                `model_${key}`
+            )
+        ];
+    });
+
+    await safeReply(
+        ctx,
+        '🤖 Доступные модели:',
+        Markup.inlineKeyboard(buttons)
+    );
+});
+
+// --------------------------------------------------
+// НАСТРОЙКИ
+// --------------------------------------------------
+
+bot.hears(MENU_BUTTONS.SETTINGS, async (ctx) => {
+    const state = getUserState(ctx.from.id);
+
+    const button = (ratio) =>
+        Markup.button.callback(
+            `${ratio} ${state.aspectRatio === ratio ? '✅' : ''}`,
+            `ratio_${ratio.replace(':', '-')}`
+        );
+
+    await safeReply(
+        ctx,
+        `⚙️ Формат изображений: ${state.aspectRatio}`,
+        Markup.inlineKeyboard([
+            [button('1:1')],
+            [button('16:9')],
+            [button('9:16')],
+            [button('4:3')],
+            [button('3:4')]
+        ])
+    );
+});
+
+// --------------------------------------------------
+// БАЛАНС
+// --------------------------------------------------
+
+bot.hears(MENU_BUTTONS.BALANCE, async (ctx) => {
+    const userId = ctx.from.id;
+    const username = ctx.from.username || '';
+
+    const balance = await callGoogleSheet(
+        'get',
+        userId,
+        username
+    );
+
+    const buttons = PAYMENT_PACKAGES.map((pkg) => [
+        Markup.button.callback(
+            `${pkg.name}: ${pkg.priceRub}₽ (${pkg.coins} 🪙)`,
+            `pay_${pkg.id}`
+        )
+    ]);
+
+    await safeReply(
+        ctx,
+        [
+            `💳 Баланс: ${balance === null ? 'ошибка' : `${balance} 🪙`}`,
+            '',
+            'Выберите пакет пополнения:'
+        ].join('\n'),
+        Markup.inlineKeyboard(buttons)
+    );
+});
+
+// --------------------------------------------------
+// ПРОФИЛЬ
+// --------------------------------------------------
+
+bot.hears(MENU_BUTTONS.PROFILE, async (ctx) => {
+    const userId = ctx.from.id;
+    const username = ctx.from.username || '';
+
+    const balance = await callGoogleSheet(
+        'get',
+        userId,
+        username
+    );
+
+    const state = getUserState(userId);
+    const model = MODELS[state.model];
+
+    await safeReply(
+        ctx,
+        [
+            '👤 Профиль пользователя',
+            '',
+            `🆔 ID: ${userId}`,
+            `💰 Баланс: ${balance === null ? 'ошибка' : `${balance} 🪙`}`,
+            `🤖 Модель: ${model.name}`,
+            `📐 Формат картинок: ${state.aspectRatio}`
+        ].join('\n')
+    );
+});
+
+// --------------------------------------------------
+// CALLBACK: МОДЕЛЬ
+// --------------------------------------------------
+
+bot.action(/^model_(.+)$/, async (ctx) => {
+    const key = ctx.match[1];
+    const model = MODELS[key];
+
+    if (!model) {
+        await safeAnswerCallback(ctx, 'Модель не найдена');
+        return;
+    }
+
+    const state = getUserState(ctx.from.id);
+    state.model = key;
+
+    await safeAnswerCallback(ctx, `Выбрано: ${model.name}`);
+
+    const lines = [
+        `✅ Активная модель: ${model.name}`,
+        '',
+        `💰 Стоимость: ${model.cost} 🪙`,
+        `📏 Лимит запроса: ${model.maxInputChars} символов`
+    ];
+
+    if (model.type === 'text') {
+        lines.push(
+            `📤 Максимальный ответ: ${model.maxOutputTokens} токенов`
+        );
+    }
+
+    await safeEditMessage(ctx, lines.join('\n'));
+});
+
+// --------------------------------------------------
+// CALLBACK: ФОРМАТ ИЗОБРАЖЕНИЯ
+// --------------------------------------------------
+
+bot.action(/^ratio_(.+)$/, async (ctx) => {
+    const ratio = ctx.match[1].replace('-', ':');
+
+    if (!ALLOWED_RATIOS.has(ratio)) {
+        await safeAnswerCallback(ctx, 'Неподдерживаемый формат');
+        return;
+    }
+
+    const state = getUserState(ctx.from.id);
+    state.aspectRatio = ratio;
+
+    await safeAnswerCallback(ctx, `Формат: ${ratio}`);
+    await safeEditMessage(
+        ctx,
+        `✅ Выбран формат изображений: ${ratio}`
+    );
+});
+
+// --------------------------------------------------
+// СОЗДАНИЕ ПЛАТЕЖА
+// --------------------------------------------------
+
+bot.action(/^pay_(.+)$/, async (ctx) => {
+    const packageId = ctx.match[1];
+    const pkg = PAYMENT_PACKAGES.find(
+        (item) => item.id === packageId
+    );
+
+    if (!pkg) {
+        await safeAnswerCallback(ctx, 'Пакет не найден');
+        return;
+    }
+
+    await safeAnswerCallback(ctx);
+
+    const authString = Buffer
+        .from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`)
+        .toString('base64');
+
+    const idempotenceKey =
+        `${ctx.from.id}-${pkg.id}-${Date.now()}-${Math.random()}`;
+
+    try {
+        const response = await axios.post(
+            'https://api.yookassa.ru/v3/payments',
+            {
+                amount: {
+                    value: `${pkg.priceRub}.00`,
+                    currency: 'RUB'
+                },
+                confirmation: {
+                    type: 'redirect',
+                    return_url: 'https://t.me/'
+                },
+                capture: true,
+                description: `Покупка ${pkg.coins} монет`,
+                metadata: {
+                    user_id: String(ctx.from.id),
+                    package_id: pkg.id,
+                    coins: String(pkg.coins)
+                }
+            },
+            {
+                timeout: 15000,
+                headers: {
+                    Authorization: `Basic ${authString}`,
+                    'Content-Type': 'application/json',
+                    'Idempotence-Key': idempotenceKey
+                }
+            }
+        );
+
+        const paymentId = response.data?.id;
+        const confirmationUrl =
+            response.data?.confirmation?.confirmation_url;
+
+        if (!paymentId || !confirmationUrl) {
+            throw new Error('ЮKassa не вернула данные платежа');
+        }
+
+        await safeReply(
+            ctx,
+            `💳 Счёт создан на ${pkg.priceRub}₽`,
+            Markup.inlineKeyboard([
+                [
+                    Markup.button.url(
+                        '🔗 Оплатить',
+                        confirmationUrl
+                    )
+                ],
+                [
+                    Markup.button.callback(
+                        '🔄 Проверить оплату',
+                        `check_${paymentId}`
+                    )
+                ]
+            ])
+        );
+    } catch (error) {
+        console.error(
+            'Ошибка создания платежа:',
+            error.response?.data || error.message
+        );
+
+        await safeReply(
+            ctx,
+            '❌ Не удалось создать платёж.'
+        );
+    }
+});
+
+// --------------------------------------------------
+// ПРОВЕРКА ПЛАТЕЖА
+// --------------------------------------------------
+
+bot.action(/^check_(.+)$/, async (ctx) => {
+    const paymentId = ctx.match[1];
+
+    await safeAnswerCallback(ctx, 'Проверка платежа...');
+
+    const authString = Buffer
+        .from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`)
+        .toString('base64');
+
+    try {
+        const response = await axios.get(
+            `https://api.yookassa.ru/v3/payments/${paymentId}`,
+            {
+                timeout: 15000,
+                headers: {
+                    Authorization: `Basic ${authString}`
+                }
+            }
+        );
+
+        const payment = response.data;
+
+        if (
+            String(payment.metadata?.user_id) !==
+            String(ctx.from.id)
+        ) {
+            await safeReply(ctx, '❌ Платёж принадлежит другому пользователю.');
+            return;
+        }
+
+        if (payment.status !== 'succeeded') {
+            await safeReply(
+                ctx,
+                `⏳ Платёж ещё не завершён.\nСтатус: ${payment.status}`
+            );
+            return;
+        }
+
+        const coins = Number(payment.metadata?.coins || 0);
+
+        if (!Number.isFinite(coins) || coins <= 0) {
+            await safeReply(ctx, '❌ Некорректное количество монет.');
+            return;
+        }
+
+        const newBalance = await callGoogleSheet(
+            'update',
+            ctx.from.id,
+            ctx.from.username || '',
+            coins,
+            paymentId
+        );
+
+        if (newBalance === null) {
+            await safeReply(
+                ctx,
+                '⚠️️ Платёж подтверждён, но баланс пока не удалось обновить. Обратитесь в поддержку.'
+            );
+            return;
+        }
+
+        await safeEditMessage(
+            ctx,
+            [
+                '✅ Оплата прошла успешно!',
+                '',
+                `Зачислено: ${coins} 🪙`,
+                `Текущий баланс: ${newBalance} 🪙`
+            ].join('\n')
+        );
+    } catch (error) {
+        console.error(
+            'Ошибка проверки платежа:',
+            error.response?.data || error.message
+        );
+
+        await safeReply(
+            ctx,
+            '❌ Ошибка проверки платежа.'
+        );
+    }
+});
+
+// --------------------------------------------------
+// GEMINI TEXT
+// --------------------------------------------------
+
+async function generateText(model, promptText, photoBuffer) {
+    const parts = [];
+
+    if (promptText?.trim()) {
+        parts.push({
+            text: promptText.trim()
+        });
+    } else {
+        parts.push({
+            text: 'Опиши подробно это изображение.'
+        });
+    }
 
     if (photoBuffer) {
         parts.push({
@@ -128,309 +669,526 @@ async function generateGeminiImage({ modelId, prompt, aspectRatio = '1:1', photo
     }
 
     const response = await ai.models.generateContent({
-        model: modelId,
-        contents: [{ role: 'user', parts }],
+        model: model.modelId,
+        contents: [
+            {
+                role: 'user',
+                parts
+            }
+        ],
         config: {
-            responseModalities: ['TEXT', 'IMAGE'],
+            maxOutputTokens: model.maxOutputTokens
+        }
+    });
+
+    const text = response.text?.trim();
+
+    if (!text) {
+        throw new Error('Google не вернул текстовый ответ.');
+    }
+
+    return text;
+}
+
+// --------------------------------------------------
+// GEMINI IMAGE
+// --------------------------------------------------
+
+async function generateImage(
+    model,
+    promptText,
+    photoBuffer,
+    aspectRatio
+) {
+    const parts = [];
+
+    parts.push({
+        text: promptText?.trim() ||
+            (
+                photoBuffer
+                    ? 'Создай улучшенную версию предоставленного изображения.'
+                    : 'Создай красивое качественное изображение.'
+            )
+    });
+
+    if (photoBuffer) {
+        parts.push({
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: photoBuffer.toString('base64')
+            }
+        });
+    }
+
+    const response = await ai.models.generateContent({
+        model: model.modelId,
+        contents: [
+            {
+                role: 'user',
+                parts
+            }
+        ],
+        config: {
+            responseModalities: ['IMAGE'],
             imageConfig: {
-                aspectRatio: safeAspectRatio
+                aspectRatio,
+                outputMimeType: 'image/jpeg'
             }
         }
     });
 
-    const candidate = response.candidates?.[0];
-    const resultParts = candidate?.content?.parts || [];
+    const candidates = response.candidates || [];
 
-    const imagePart = resultParts.find(part =>
-        !part.thought &&
-        part.inlineData?.data &&
-        part.inlineData?.mimeType?.startsWith('image/')
-    );
+    for (const candidate of candidates) {
+        const responseParts = candidate.content?.parts || [];
 
-    if (!imagePart) {
-        const explanation = resultParts
-            .filter(part => !part.thought && part.text)
-            .map(part => part.text)
-            .join('\n');
+        for (const part of responseParts) {
+            const imageData = part.inlineData?.data;
+            const mimeType = part.inlineData?.mimeType;
 
-        const reason = response.promptFeedback?.blockReason || candidate?.finishReason || 'NO_IMAGE';
-        throw new Error(`Google не вернул изображение (${reason}). ${explanation.slice(0, 300)}`);
+            if (
+                imageData &&
+                mimeType &&
+                mimeType.startsWith('image/')
+            ) {
+                return {
+                    buffer: Buffer.from(imageData, 'base64'),
+                    mimeType
+                };
+            }
+        }
     }
 
-    return {
-        buffer: Buffer.from(imagePart.inlineData.data, 'base64'),
-        mimeType: imagePart.inlineData.mimeType
-    };
+    const blockReason =
+        response.promptFeedback?.blockReason ||
+        candidates[0]?.finishReason ||
+        'UNKNOWN';
+
+    throw new Error(
+        `Google не вернул изображение. Причина: ${blockReason}`
+    );
 }
 
-// — КЛАВИАТУРЫ И РОУТИНГ —
-const mainKeyboard = Markup.keyboard([
-    [MENU_BUTTONS.SELECT, MENU_BUTTONS.SETTINGS],
-    [MENU_BUTTONS.BALANCE, MENU_BUTTONS.PROFILE]
-]).resize();
+// --------------------------------------------------
+// РАЗБИВКА ДЛИННЫХ СООБЩЕНИЙ
+// --------------------------------------------------
 
-bot.start((ctx) => {
-    getUserState(ctx.from.id);
-    safeReply(ctx, '👋 Добро пожаловать в AI Studio!\n\nВыберите модель кнопкой ниже и отправьте запрос.', mainKeyboard);
-});
+function splitTelegramMessage(text, maxLength = 4000) {
+    const chunks = [];
 
-bot.hears(MENU_BUTTONS.SELECT, (ctx) => {
-    const buttons = Object.keys(MODELS).map(k => {
-        const m = MODELS[k];
-        return [Markup.button.callback(`${m.name} — ${m.cost} 🪙`, `model_${k}`)];
-    });
-    safeReply(ctx, '🤖 Доступные нейросети:', Markup.inlineKeyboard(buttons));
-});
+    for (let i = 0; i < text.length; i += maxLength) {
+        chunks.push(text.slice(i, i + maxLength));
+    }
 
-bot.hears(MENU_BUTTONS.SETTINGS, (ctx) => {
-    const st = getUserState(ctx.from.id);
-    const r = st.aspect_ratio;
-    safeReply(ctx, `⚙️ **Формат изображений:** текущий **${r}**`, Markup.inlineKeyboard([
-        [Markup.button.callback(`1:1 ${r === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
-        [Markup.button.callback(`16:9 ${r === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
-        [Markup.button.callback(`9:16 ${r === '9:16' ? '✅' : ''}`, 'ratio_9:16')]
-    ]));
-});
+    return chunks;
+}
 
-bot.hears(MENU_BUTTONS.BALANCE, async (ctx) => {
-    const balance = await callGoogleSheet('get', ctx.from.id, ctx.from.username);
-    const btns = PAYMENT_PACKAGES.map(p => [Markup.button.callback(`${p.name}: ${p.priceRub}₽ (${p.coins} 🪙)`, `pay_${p.id}`)]);
-    safeReply(ctx, `💳 Баланс: **${balance !== null ? balance : 'Ошибка'} 🪙**\nВыберите пакет пополнения:`, Markup.inlineKeyboard(btns));
-});
+// --------------------------------------------------
+// ОСНОВНАЯ ЛОГИКА
+// --------------------------------------------------
 
-bot.hears(MENU_BUTTONS.PROFILE, async (ctx) => {
+async function handleAIQuery(
+    ctx,
+    promptText = '',
+    photoBuffer = null
+) {
     const userId = ctx.from.id;
-    const balance = await callGoogleSheet('get', userId, ctx.from.username);
-    const state = getUserState(userId);
-    const m = MODELS[state.model] || MODELS['flash_3_8'];
+    const username = ctx.from.username || '';
 
-    safeReply(ctx, 
-        `👤 **Профиль пользователя**\n\n` +
-        `🆔 ID: \`${userId}\`\n` +
-        `💰 Баланс: **${balance !== null ? balance : 'Ошибка'} 🪙**\n` +
-        `🤖 Активная модель: **${m.name}** (${m.cost} 🪙)\n` +
-        `📐 Формат картинок: **${state.aspect_ratio}**`
-    );
-});
-
-// — CALLBACK ОБРАБОТЧИКИ —
-bot.action(/^model_(.+)$/, async (ctx) => {
-    const key = ctx.match[1];
-    if (!MODELS[key]) return ctx.answerCbQuery('❌ Модель не найдена').catch(() => {});
-
-    const state = getUserState(ctx.from.id);
-    state.model = key;
-    const m = MODELS[key];
-
-    try {
-        await ctx.answerCbQuery(`Выбрано: ${m.name}`);
-        await ctx.editMessageText(
-            `✅ Активная модель: **${m.name}**\n\n` +
-            `💰 Стоимость: **${m.cost} 🪙**\n` +
-            `📏 Лимит длины запроса: **${m.maxInputChars} символов**` +
-            (m.type === 'text' ? `\n📤 Макс. длина ответа: **${m.maxOutputTokens} токенов**` : ''),
-            { parse_mode: 'Markdown' }
+    if (processingUsers.has(userId)) {
+        await safeReply(
+            ctx,
+            '⏳ Предыдущий запрос ещё выполняется.'
         );
-    } catch (e) {
-        console.warn('Ошибка при обновлении сообщения модели:', e.message);
+        return;
     }
-});
 
-bot.action(/^ratio_(.+)$/, async (ctx) => {
-    const ratio = ctx.match[1];
-    const state = getUserState(ctx.from.id);
-    state.aspect_ratio = ratio;
-    try {
-        await ctx.answerCbQuery(`Формат: ${ratio}`);
-        await ctx.editMessageText(`✅ Выбран формат картинок: **${ratio}**`, { parse_mode: 'Markdown' });
-    } catch (e) {
-        console.warn('Ошибка при смене формата:', e.message);
-    }
-});
-
-bot.action(/^pay_(.+)$/, async (ctx) => {
-    const pkg = PAYMENT_PACKAGES.find(p => p.id === ctx.match[1]);
-    if (!pkg) return ctx.answerCbQuery().catch(() => {});
-    await ctx.answerCbQuery().catch(() => {});
-
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    try {
-        const r = await axios.post('https://api.yookassa.ru/v3/payments', {
-            amount: { value: `${pkg.priceRub}.00`, currency: 'RUB' },
-            confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' },
-            capture: true,
-            description: `Покупка ${pkg.coins} монет`,
-            metadata: { user_id: String(ctx.from.id), coins: String(pkg.coins) }
-        }, {
-            headers: { 'Authorization': `Basic ${authString}`, 'Content-Type': 'application/json', 'Idempotence-Key': Math.random().toString(36) },
-            timeout: 10000
-        });
-
-        safeReply(ctx, `💳 **Счет на оплату создан** (${pkg.priceRub}₽)`, Markup.inlineKeyboard([
-            [Markup.button.url('🔗 Оплатить', r.data.confirmation.confirmation_url)],
-            [Markup.button.callback('🔄 Проверить оплату', `check_${r.data.id}`)]
-        ]));
-    } catch (e) {
-        safeReply(ctx, '❌ Ошибка при формировании счета.');
-    }
-});
-
-bot.action(/^check_(.+)$/, async (ctx) => {
-    const paymentId = ctx.match[1];
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
-    await ctx.answerCbQuery('Проверка…').catch(() => {});
+    processingUsers.add(userId);
 
     try {
-        const res = await axios.get(`https://api.yookassa.ru/v3/payments/${paymentId}`, {
-            headers: { 'Authorization': `Basic ${authString}` },
-            timeout: 10000
-        });
-        if (res.data.status === 'succeeded') {
-            const coins = parseInt(res.data.metadata?.coins || 0);
-            const newBalance = await callGoogleSheet('update', ctx.from.id, ctx.from.username, coins);
-            await ctx.editMessageText(`✅ **Оплата прошла успешно!**\nЗачислено: ${coins} 🪙\nТекущий баланс: ${newBalance} 🪙`, { parse_mode: 'Markdown' });
-        } else {
-            safeReply(ctx, `⏳ Платеж обрабатывается. Статус: ${res.data.status}`);
-        }
-    } catch (e) {
-        safeReply(ctx, '❌ Ошибка проверки статуса платежа.');
-    }
-});
+        const originalState = getUserState(userId);
 
-// — ОСНОВНАЯ ЛОГИКА ОБРАБОТКИ ЗАПРОСОВ —
-async function handleAIQuery(ctx, promptText, photoBuffer = null) {
-    const userId = ctx.from.id;
-    const username = ctx.from.username || 'User';
+        const state = {
+            model: originalState.model,
+            aspectRatio: originalState.aspectRatio
+        };
 
-    if (isProcessing.has(userId)) {
-        return safeReply(ctx, '⏳ Предыдущий запрос еще выполняется.');
-    }
+        const model = MODELS[state.model] || MODELS.flash_text;
+        const prompt = String(promptText || '').trim();
 
-    isProcessing.add(userId);
-
-    try {
-        const state = { ...getUserState(userId) };
-        const modelData = MODELS[state.model] || MODELS['flash_3_8'];
-
-        if (promptText && promptText.length > modelData.maxInputChars) {
-            return safeReply(
+        if (prompt.length > model.maxInputChars) {
+            await safeReply(
                 ctx,
-                `⛔ **Превышен лимит длины запроса!**\n\n` +
-                `Модель: **${modelData.name}**\n` +
-                `Максимум: **${modelData.maxInputChars}** символов\n` +
-                `Ваш запрос: **${promptText.length}** символов`
+                [
+                    '⛔ Запрос слишком длинный.',
+                    `Максимум: ${model.maxInputChars} символов`,
+                    `Сейчас: ${prompt.length} символов`
+                ].join('\n')
+            );
+            return;
+        }
+
+        const balance = await callGoogleSheet(
+            'get',
+            userId,
+            username
+        );
+
+        if (balance === null) {
+            await safeReply(
+                ctx,
+                '❌ Не удалось получить баланс.'
+            );
+            return;
+        }
+
+        if (balance < model.cost) {
+            await safeReply(
+                ctx,
+                [
+                    '❌ Недостаточно монет.',
+                    `Стоимость: ${model.cost} 🪙`,
+                    `Баланс: ${balance} 🪙`
+                ].join('\n')
+            );
+            return;
+        }
+
+        if (model.type === 'text') {
+            try {
+                await ctx.sendChatAction('typing');
+            } catch (_) {}
+
+            const result = await generateText(
+                model,
+                prompt,
+                photoBuffer
+            );
+
+            const newBalance = await callGoogleSheet(
+                'update',
+                userId,
+                username,
+                -model.cost
+            );
+
+            if (newBalance === null) {
+                await safeReply(
+                    ctx,
+                    '⚠️ Ответ получен, но списание монет не подтвердилось. Обратитесь в поддержку.'
+                );
+                return;
+            }
+
+            const messages = splitTelegramMessage(result);
+
+            for (const message of messages) {
+                await safeReply(ctx, message);
+            }
+
+            await safeReply(
+                ctx,
+                `📉 Списано: ${model.cost} 🪙\n💰 Баланс: ${newBalance} 🪙`
+            );
+
+            return;
+        }
+
+        if (model.type === 'image') {
+            try {
+                await ctx.sendChatAction('upload_photo');
+            } catch (_) {}
+
+            const image = await generateImage(
+                model,
+                prompt,
+                photoBuffer,
+                state.aspectRatio
+            );
+
+            const newBalance = await callGoogleSheet(
+                'update',
+                userId,
+                username,
+                -model.cost
+            );
+
+            if (newBalance === null) {
+                await safeReply(
+                    ctx,
+                    '⚠️ Изображение создано, но списание монет не подтвердилось. Обратитесь в поддержку.'
+                );
+                return;
+            }
+
+            // Исправлено: await с маленькой буквы
+            await safeSendPhoto(
+                ctx,
+                image.buffer,
+                {
+                    caption: [
+                        `✅ Готово: ${model.name}`,
+                        `📐 Формат: ${state.aspectRatio}`,
+                        `📉 Списано: ${model.cost} 🪙`,
+                        `💰 Баланс: ${newBalance} 🪙`
+                    ].join('\n')
+                }
             );
         }
+    } catch (error) {
+        console.error(
+            'Ошибка обработки AI-запроса:',
+            error.response?.data || error.message
+        );
 
-        const balance = await callGoogleSheet('get', userId, username);
-        if (balance === null) return safeReply(ctx, '❌ Ошибка связи с базой данных.');
-        if (balance < modelData.cost) {
-            return safeReply(ctx, `❌ **Недостаточно монет.**\nСтоимость запроса: ${modelData.cost} 🪙\nВаш баланс: ${balance} 🪙`);
-        }
-
-        if (modelData.type === 'text') {
-            try { await ctx.sendChatAction('typing'); } catch (e) {}
-
-            let contents;
-            if (photoBuffer) {
-                contents = [
-                    promptText || 'Опиши детально это изображение.',
-                    { inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }
-                ];
-            } else {
-                contents = promptText;
-            }
-
-            const response = await ai.models.generateContent({
-                model: modelData.modelId,
-                contents: contents,
-                config: { maxOutputTokens: modelData.maxOutputTokens }
-            });
-
-            const replyText = response.text || 'Получен пустой ответ.';
-            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const balanceStr = newBalance !== null ? newBalance : (balance - modelData.cost);
-
-            await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${balanceStr} 🪙_`);
-
-        } else if (modelData.type === 'image') {
-            try { await ctx.sendChatAction('upload_photo'); } catch (e) {}
-
-            const { buffer: imgBuffer } = await generateGeminiImage({
-                modelId: modelData.modelId,
-                prompt: promptText,
-                aspectRatio: state.aspect_ratio || '1:1',
-                photoBuffer
-            });
-
-            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const balanceStr = newBalance !== null ? newBalance : (balance - modelData.cost);
-
-            try {
-                await ctx.replyWithPhoto(
-                    { source: imgBuffer },
-                    {
-                        caption: `🖼 **Готово!** (${modelData.name})\n📐 Формат: ${state.aspect_ratio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${balanceStr} 🪙_`,
-                        parse_mode: 'Markdown'
-                    }
-                );
-            } catch (err) {
-                console.warn('Не удалось отправить сгенерированное фото:', err.message);
-            }
-        }
-    } catch (err) {
-        console.error('Ошибка API Google / Обработки:', err.response?.data || err.message);
-        let userErrMsg = err.message || 'Сбой сервиса Google API';
-        if (err.response?.data?.error?.message) {
-            userErrMsg = err.response.data.error.message;
-        }
-        await safeReply(ctx, `⚠️ Ошибка генерации: ${userErrMsg}\nМонеты списаны не были.`);
+        await safeReply(
+            ctx,
+            [
+                '❌ Не удалось обработать запрос.',
+                '',
+                error.message || 'Неизвестная ошибка'
+            ].join('\n')
+        );
     } finally {
-        isProcessing.delete(userId);
+        processingUsers.delete(userId);
     }
 }
 
-// — СЛУШАТЕЛИ СООБЩЕНИЙ —
-bot.on('text', (ctx) => {
-    const text = ctx.message.text;
-    if (text.startsWith('/') || Object.values(MENU_BUTTONS).includes(text)) return;
-    handleAIQuery(ctx, text, null).catch(e => console.error('Unhandled AI query error:', e.message));
+// --------------------------------------------------
+// ПОЛУЧЕНИЕ ФОТОГРАФИИ
+// --------------------------------------------------
+
+async function downloadTelegramPhoto(ctx) {
+    const photos = ctx.message?.photo;
+
+    if (!photos || photos.length === 0) {
+        return null;
+    }
+
+    const largestPhoto = photos[photos.length - 1];
+    const fileLink = await ctx.telegram.getFileLink(
+        largestPhoto.file_id
+    );
+
+    const response = await axios.get(fileLink.href, {
+        responseType: 'arraybuffer',
+        timeout: 30000
+    });
+
+    return Buffer.from(response.data);
+}
+
+// --------------------------------------------------
+// ТЕКСТОВЫЕ СООБЩЕНИЯ
+// --------------------------------------------------
+
+bot.on('text', async (ctx) => {
+    const text = ctx.message.text?.trim();
+
+    if (!text) {
+        return;
+    }
+
+    if (
+        text === MENU_BUTTONS.SELECT ||
+        text === MENU_BUTTONS.SETTINGS ||
+        text === MENU_BUTTONS.BALANCE ||
+        text === MENU_BUTTONS.PROFILE
+    ) {
+        return;
+    }
+
+    await handleAIQuery(ctx, text);
 });
+
+// --------------------------------------------------
+// ФОТОГРАФИИ С ПОДПИСЬЮ И БЕЗ НЕЁ
+// --------------------------------------------------
 
 bot.on('photo', async (ctx) => {
-    const photos = ctx.message.photo;
-    const photo = photos[photos.length - 1];
-    const caption = ctx.message.caption || '';
+    const caption = ctx.message.caption?.trim() || '';
+
     try {
-        const fileLink = await bot.telegram.getFileLink(photo.file_id);
-        const res = await axios.get(fileLink.href, { responseType: 'arraybuffer', timeout: 10000 });
-        handleAIQuery(ctx, caption, Buffer.from(res.data)).catch(e => console.error('Unhandled photo AI error:', e.message));
-    } catch (e) {
-        console.error('Ошибка загрузки фото:', e.message);
-        safeReply(ctx, '❌ Ошибка скачивания фото.');
+        const photoBuffer = await downloadTelegramPhoto(ctx);
+
+        if (!photoBuffer) {
+            await safeReply(
+                ctx,
+                '❌ Не удалось загрузить изображение.'
+            );
+            return;
+        }
+
+        await handleAIQuery(
+            ctx,
+            caption,
+            photoBuffer
+        );
+    } catch (error) {
+        console.error(
+            'Ошибка загрузки фотографии:',
+            error.message
+        );
+
+        await safeReply(
+            ctx,
+            '❌ Не удалось обработать фотографию.'
+        );
     }
 });
 
-// — СЕРВЕР И ВЕБХУК —
-const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
-if (RENDER_EXTERNAL_URL) {
-    let webhookPath;
-    try {
-        webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-    } catch (e) {
-        webhookPath = `/telegraf/webhook`;
+// --------------------------------------------------
+// ОБРАБОТКА ОШИБОК TELEGRAM
+// --------------------------------------------------
+
+bot.catch(async (error, ctx) => {
+    if (isTelegramBlockedError(error)) {
+        console.warn(
+            `[Telegram 403] Пользователь заблокировал бота: ${ctx?.from?.id}`
+        );
+        return;
     }
-    app.use(bot.webhookCallback(webhookPath));
-    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
-        console.log(`Telegram webhook успешно установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
-    }).catch(e => console.error('Ошибка установки вебхука:', e.message));
-} else {
-    bot.launch();
-    console.log("Бот запущен локально (Long Polling)");
+
+    console.error(
+        'Глобальная ошибка Telegram:',
+        error.response?.data || error.message
+    );
+
+    if (ctx) {
+        await safeReply(
+            ctx,
+            '❌ Произошла внутренняя ошибка.'
+        );
+    }
+});
+
+// --------------------------------------------------
+// HTTP API
+// --------------------------------------------------
+
+app.get('/', (req, res) => {
+    res.status(200).send('AI Studio bot is running');
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        ok: true,
+        service: 'ai-studio-bot',
+        date: new Date().toISOString()
+    });
+});
+
+app.post('/yookassa/webhook', async (req, res) => {
+    res.sendStatus(200);
+
+    try {
+        const event = req.body?.event;
+        const payment = req.body?.object;
+
+        if (
+            event !== 'payment.succeeded' ||
+            !payment ||
+            payment.status !== 'succeeded'
+        ) {
+            return;
+        }
+
+        const userId = payment.metadata?.user_id;
+        const coins = Number(payment.metadata?.coins || 0);
+        const paymentId = payment.id;
+
+        if (!userId || !Number.isFinite(coins) || coins <= 0) {
+            console.warn(
+                'Webhook содержит неполные данные:',
+                req.body
+            );
+            return;
+        }
+
+        const balance = await callGoogleSheet(
+            'update',
+            userId,
+            '',
+            coins,
+            paymentId
+        );
+
+        if (balance === null) {
+            console.error(
+                `Не удалось начислить монеты по платежу ${paymentId}`
+            );
+            return;
+        }
+
+        await safeReply(
+            {
+                from: { id: userId },
+                reply: (text, extra) =>
+                    bot.telegram.sendMessage(
+                        userId,
+                        text,
+                        extra
+                    )
+            },
+            [
+                '✅ Оплата подтверждена!',
+                `Зачислено: ${coins} 🪙`,
+                `Баланс: ${balance} 🪙`
+            ].join('\n')
+        );
+    } catch (error) {
+        console.error(
+            'Ошибка YooKassa webhook:',
+            error.message
+        );
+    }
+});
+
+// --------------------------------------------------
+// ЗАПУСК
+// --------------------------------------------------
+
+async function start() {
+    app.listen(PORT, () => {
+        console.log(
+            `HTTP-сервер запущен на порту ${PORT}`
+        );
+    });
+
+    if (RENDER_EXTERNAL_URL) {
+        const webhookPath = '/telegram/webhook';
+        const webhookUrl =
+            `${RENDER_EXTERNAL_URL.replace(/\/$/, '')}${webhookPath}`;
+
+        // Важно: регистрируем обработчик вебхука Telegraf в Express
+        app.use(bot.webhookCallback(webhookPath));
+
+        await bot.telegram.setWebhook(webhookUrl);
+
+        console.log(
+            `Telegram webhook установлен: ${webhookUrl}`
+        );
+    } else {
+        await bot.launch();
+
+        console.log(
+            'Telegram-бот запущен через long polling'
+        );
+    }
 }
 
-app.get('/', (req, res) => res.send('AI Studio Backend Status: OK'));
-app.listen(PORT, () => console.log(`Web server is running on port ${PORT}`));
+start().catch((error) => {
+    console.error(
+        'Критическая ошибка запуска:',
+        error
+    );
+    process.exit(1);
+});
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', () => {
+    bot.stop('SIGINT');
+});
+
+process.once('SIGTERM', () => {
+    bot.stop('SIGTERM');
+});
