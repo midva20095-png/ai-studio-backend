@@ -72,12 +72,6 @@ const PAYMENT_PACKAGES = [
     { id: 'pay_2500', name: '👑 VIP', priceRub: 2500, coins: 500 }
 ];
 
-const RATIO_PROMPTS = {
-    '1:1': 'square aspect ratio 1:1',
-    '16:9': 'wide aspect ratio 16:9 horizontal landscape',
-    '9:16': 'vertical aspect ratio 9:16 portrait mobile format'
-};
-
 const userState = {};
 const isProcessing = new Set();
 
@@ -248,6 +242,8 @@ bot.action(/model_(.+)/, async (ctx) => {
 
 bot.action(/ratio_(.+)/, async (ctx) => {
     const ratio = ctx.match[1];
+    if (!['1:1', '16:9', '9:16'].includes(ratio)) return ctx.answerCbQuery('❌ Неверный формат');
+    
     if (!userState[ctx.from.id]) userState[ctx.from.id] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     userState[ctx.from.id].aspect_ratio = ratio;
     
@@ -314,14 +310,17 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
         } else if (modelData.type === 'image') {
             await ctx.sendChatAction('upload_photo');
-            const ratioText = RATIO_PROMPTS[userConfig.aspect_ratio] || RATIO_PROMPTS['1:1'];
-            const finalPrompt = `${promptText}, ${modelData.qualityPrompt}, ${ratioText}`;
+            const finalPrompt = `${promptText}, ${modelData.qualityPrompt}`;
+            const selectedRatio = userConfig.aspect_ratio || '1:1';
 
             const response = await ai.models.generateContent({
                 model: modelData.modelId,
                 contents: finalPrompt,
                 config: {
-                    responseModalities: [Modality.TEXT, Modality.IMAGE]
+                    responseModalities: [Modality.TEXT, Modality.IMAGE],
+                    imageConfig: {
+                        aspectRatio: selectedRatio
+                    }
                 }
             });
 
@@ -340,7 +339,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             }
 
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${userConfig.aspect_ratio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
+            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
             
             await safeReplyWithPhoto(ctx, imgBuffer, caption);
         }
