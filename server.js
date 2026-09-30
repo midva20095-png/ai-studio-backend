@@ -21,11 +21,11 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- ТАРИФЫ, ЛИМИТЫ И МОДЕЛИ ---
+// --- ТАРИФЫ, ЛИМИТЫ И АКТУАЛЬНЫЕ МОДЕЛИ ---
 const MODELS = {
     'flash_3_8': { 
         name: '⚡ Flash 3.8 / Flash-Lite', 
-        modelId: 'gemini-2.5-flash', 
+        modelId: 'gemini-3.8-flash', 
         type: 'text', 
         cost: 1, 
         maxInputChars: 4000,
@@ -41,7 +41,7 @@ const MODELS = {
     },
     'nano_banana_2': { 
         name: '🎨 Nano Banana 2 (HD)', 
-        modelId: 'gemini-2.5-flash-image', 
+        modelId: 'gemini-3.8-flash', 
         type: 'image', 
         qualityPrompt: 'HD quality, clear details, high resolution', 
         cost: 2, 
@@ -49,7 +49,7 @@ const MODELS = {
     },
     'nano_banana_pro': { 
         name: '🍌 Nano Banana Pro (Ultra-HD)', 
-        modelId: 'gemini-2.5-flash-image', 
+        modelId: 'gemini-3.8-flash', 
         type: 'image', 
         qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
         cost: 4, 
@@ -57,7 +57,7 @@ const MODELS = {
     },
     'nano_banana_4k': { 
         name: '💎 Nano Banana 4K (Премиум)', 
-        modelId: 'gemini-2.5-flash-image', 
+        modelId: 'gemini-3.8-flash', 
         type: 'image', 
         qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
         cost: 10, 
