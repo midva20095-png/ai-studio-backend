@@ -32,6 +32,13 @@ const MODELS = {
         cost: 3,               // 1 запрос = 3 кредита (15 руб)
         maxInputChars: 8000,   
         maxOutputTokens: 2048  
+    },
+    'gemini_31_flash_image': { 
+        name: 'Gemini 3.1 Flash Image', 
+        modelId: 'gemini-3.1-flash-image', 
+        cost: 3,               // 1 запрос = 3 кредита (15 руб)
+        maxInputChars: 5000,   
+        maxOutputTokens: 2048  
     }
 };
 
