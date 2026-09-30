@@ -10,31 +10,27 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// 🔑 ВШИТЫЕ КЛЮЧИ И ССЫЛКА НА GOOGLE SCRIPT
+// 🔑 КОНФИГУРАЦИЯ И КЛЮЧИ
 const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
 const YUKASSA_SHOP_ID = '1120841';
 const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// Настройка единственной модели
+const MODEL_ID = 'gemini-2.5-flash';
+const MODEL_NAME = 'Gemini AI';
+const REQUEST_COST = 1; // 1 запрос = 1 токен
+
 const bot = new Telegraf(BOT_TOKEN);
 
-// Хранение выбранной модели для каждого пользователя
-const userModels = {};
-
-// Конфигурация моделей AI (исправлены modelId на актуальные)
-const MODELS = {
-    'flash': { name: '⚡ Gemini 3.8 Flash (Быстрая)', modelId: 'gemini-3.8-flash', cost: 1 },
-    'pro': { name: '🧠 Nano Banana Pro / Gemini 3.1 Pro', modelId: 'gemini-3.1-pro-preview', cost: 5 }
-};
-
-// Функция экранирования специальных символов Markdown, чтобы имена вроде VLADONE_Ne не ломали Telegram
+// Экранирование спецсимволов Markdown для защиты от ошибок Telegram
 function escapeMarkdown(text) {
     if (!text) return '';
     return String(text).replace(/[_*`\[\]()]/g, '\\$&');
 }
 
-// 1. ФУНКЦИЯ СВЯЗИ С GOOGLE ТАБЛИЦЕЙ
+// 1. ВЗАИМОДЕЙСТВИЕ С GOOGLE ТАБЛИЦЕЙ
 async function callGoogleSheet(action, userId, username = '', amount = 0) {
     try {
         const response = await axios.post(GOOGLE_SCRIPT_URL, {
@@ -110,44 +106,27 @@ async function checkPaymentStatus(paymentId) {
     }
 }
 
-// 3. ОБРАБОТЧИКИ ТЕЛЕГРАМ-БОТА
+// 3. КОМАНДЫ И НАВИГАЦИЯ БОТА
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username || ctx.from.first_name || 'User';
     const safeUsername = escapeMarkdown(username);
     
     const balance = await callGoogleSheet('get', userId, username);
-    const currentModelKey = userModels[userId] || 'flash';
 
     ctx.reply(
         `👋 Привет, ${safeUsername}!\n\n` +
         `🆔 Твой ID: \`${userId}\`\n` +
-        `💰 Баланс в таблице: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${escapeMarkdown(MODELS[currentModelKey].name)}*\n\n` +
-        `Выбирай модель или пополняй баланс:`,
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
+        `🤖 Модель: *${MODEL_NAME}*\n\n` +
+        `Просто отправь мне текст сообщения:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
-                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
     );
-});
-
-bot.action('set_model_flash', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini Flash');
-    ctx.reply('✅ Активна модель ⚡ Gemini 3.8 Flash.');
-});
-
-bot.action('set_model_pro', async (ctx) => {
-    const userId = ctx.from.id;
-    userModels[userId] = 'pro';
-    await ctx.answerCbQuery('Выбрана модель Nano Banana Pro');
-    ctx.reply('🧠 Активна модель 🧠 Nano Banana Pro.');
 });
 
 bot.action('menu_buy', async (ctx) => {
@@ -183,17 +162,14 @@ bot.action('menu_main', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
-    const currentModelKey = userModels[userId] || 'flash';
 
     ctx.reply(
         `🏠 *Главное меню*\n\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${escapeMarkdown(MODELS[currentModelKey].name)}*`,
+        `🤖 Модель: *${MODEL_NAME}*`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_flash')],
-                [Markup.button.callback('🧠 Nano Banana Pro (5 токенов)', 'set_model_pro')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
@@ -245,6 +221,7 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
+// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (GEMINI)
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -254,14 +231,10 @@ bot.on('text', async (ctx) => {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
     }
 
-    const modelKey = userModels[userId] || 'flash';
-    const selectedModel = MODELS[modelKey];
-
-    if (balance < selectedModel.cost) {
+    if (balance < REQUEST_COST) {
         return ctx.reply(
             `❌ *Недостаточно токенов!*\n\n` +
-            `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
-            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
+            `📉 Требуется: ${REQUEST_COST} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
             `Пополните баланс в личном кабинете:`,
             {
@@ -276,23 +249,23 @@ bot.on('text', async (ctx) => {
         await ctx.sendChatAction('typing');
 
         const response = await ai.models.generateContent({
-            model: selectedModel.modelId,
+            model: MODEL_ID,
             contents: text,
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -REQUEST_COST);
 
-        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)_`, {
+        ctx.reply(`${aiReply}\n\n_(${MODEL_NAME} | Списано: ${REQUEST_COST} 🪙 | Остаток: ${newBalance} 🪙)_`, {
             parse_mode: 'Markdown'
         });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
-        ctx.reply('Произошла ошибка при обращении к искусственному интеллекту. Попробуй позже.');
+        ctx.reply('Произошла ошибка при обращении к нейросети. Попробуй позже.');
     }
 });
 
-// 4. СЕРВЕР И ВЕБХУКИ
+// 5. ЗАПУСК СЕРВЕРА
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 if (RENDER_EXTERNAL_URL) {
