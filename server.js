@@ -7,10 +7,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Конфигурация из переменных окружения
-const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA'; // Лучше вынести в process.env.BOT_TOKEN
-const YUKASSA_SHOP_ID = '1120841'; // Лучше вынести в process.env
-const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk'; // Лучше вынести в process.env
+// Конфигурация из переменных окружения (ВНИМАНИЕ: Токены лучше перенести в process.env на Render!)
+const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const YUKASSA_SHOP_ID = '1120841'; 
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -21,23 +21,26 @@ app.use(cors());
 app.use(express.json());
 
 /**
- * 🤖 ПЕРЕЧЕНЬ МОДЕЛЕЙ (Официальные API соответствия)
- * ИСПРАВЛЕНО: убраны суффиксы -latest, теперь используются актуальные имена
+ * 🤖 ПЕРЕЧЕНЬ МОДЕЛЕЙ
+ * Подключены 3 актуальных движка: 
+ * - gemini-1.5-pro (Самая умная)
+ * - gemini-1.5-flash (Оптимальная)
+ * - gemini-1.5-flash-8b (Самая быстрая для Lite-версий)
  */
 const MODELS = {
     'g38f': { name: 'Gemini 3.8 Flash', cost: 1, id: 'gemini-1.5-flash' },
     'g38l': { name: 'Gemini 3.8 Live', cost: 2, id: 'gemini-1.5-flash' },
     'g38th': { name: 'Gemini 3.8 Live Thinking', cost: 3, id: 'gemini-1.5-pro' },
     'g38tts': { name: 'Gemini 3.8 Flash TTS', cost: 1.5, id: 'gemini-1.5-flash' },
-    'g38ttsl': { name: 'Gemini 3.8 Flash-Lite TTS', cost: 0.5, id: 'gemini-1.5-flash' },
+    'g38ttsl': { name: 'Gemini 3.8 Flash-Lite TTS', cost: 0.5, id: 'gemini-1.5-flash-8b' },
     'g37f': { name: 'Gemini 3.7 Flash', cost: 1, id: 'gemini-1.5-flash' },
     'g36f': { name: 'Gemini 3.6 Flash', cost: 1, id: 'gemini-1.5-flash' },
     'g35f': { name: 'Gemini 3.5 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g35fl': { name: 'Gemini 3.5 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash' },
-    'g31f': { name: 'Gemini 3.1 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash' },
+    'g35fl': { name: 'Gemini 3.5 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-8b' },
+    'g31f': { name: 'Gemini 3.1 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-8b' },
     'nbp': { name: 'Нано Банан Про', cost: 3, id: 'gemini-1.5-pro' },
     'nb2': { name: 'Нано Банан 2', cost: 2, id: 'gemini-1.5-pro' },
-    'nb2l': { name: 'Nano Banana 2 Lite', cost: 2, id: 'gemini-1.5-pro' },
+    'nb2l': { name: 'Nano Banana 2 Lite', cost: 2, id: 'gemini-1.5-flash-8b' },
     'g31p': { name: 'Gemini 3.1 Pro', cost: 3.5, id: 'gemini-1.5-pro' },
     'g3f': { name: 'Gemini 3 Flash', cost: 1, id: 'gemini-1.5-flash' },
     'g35t': { name: 'Gemini 3.5 Транскрипция', cost: 1, id: 'gemini-1.5-flash' },
@@ -155,8 +158,8 @@ async function performAIRequest(ctx, isMedia = false) {
     const cfg = MODELS[currentKey];
 
     const currentBal = await manageSheets('get', uid, ctx.from.username);
-    if (currentBal === null) return ctx.reply('⚠️ Ошибка соединения с БД Таблицы.');
-    if (currentBal < cfg.cost) return ctx.reply(`❌ Недостаточно средств для этой модели (${cfg.cost} кр.).`);
+    if (currentBal === null) return ctx.reply('⚠️ Ошибка соединения с базой данных.');
+    if (currentBal < cfg.cost) return ctx.reply(`❌ Недостаточно средств для этой модели (${cfg.cost} кр.). Пополните баланс в Личном кабинете.`);
 
     try {
         await ctx.sendChatAction('typing');
@@ -168,7 +171,7 @@ async function performAIRequest(ctx, isMedia = false) {
             const fileUrl = await ctx.telegram.getFileLink(fileId);
             const imageBuffer = await axios.get(fileUrl.href, { responseType: 'arraybuffer' });
             promptData = [
-                ctx.message.caption || "Проанализируй изображение",
+                ctx.message.caption || "Проанализируй это изображение",
                 { inlineData: { data: Buffer.from(imageBuffer.data).toString('base64'), mimeType: 'image/jpeg' } }
             ];
         } else {
@@ -176,26 +179,39 @@ async function performAIRequest(ctx, isMedia = false) {
         }
 
         const result = await activeModel.generateContent(promptData);
-        let finalResponse = result.response.text();
+        const finalResponse = result.response.text();
         
+        // Списываем кредиты только после успешного ответа
         const finalBalance = await manageSheets('update', uid, '', -cfg.cost);
         
-        // ВАЖНОЕ ИСПРАВЛЕНИЕ: Telegram ругается на markdown от Gemini, когда мы шлем parse_mode: 'HTML'
-        // Gemini часто присылает текст со звездочками **текст**
-        // Убираем парсинг HTML для самого ответа нейросети, чтобы бот не падал от некорректных тегов
-        if (finalResponse.length > 4000) {
-            await ctx.reply(finalResponse.substring(0, 4000));
-        } else {
-            await ctx.reply(`🤖 Модель: ${cfg.name}\n\n${finalResponse}\n\n💰 Стоимость: ${cfg.cost} кр. | Баланс: ${finalBalance} кр.`);
+        // Разбивка ответа, если он превышает лимит Telegram (4096 символов)
+        // Бьем по 3900 символов, чтобы осталось место для подписи
+        const chunks = finalResponse.match(/[\s\S]{1,3900}/g) || ["(Пустой ответ)"];
+        
+        for (let i = 0; i < chunks.length; i++) {
+            let textToSend = chunks[i];
+            
+            // К первому сообщению добавляем заголовок
+            if (i === 0) {
+                textToSend = `🤖 Модель: ${cfg.name}\n\n` + textToSend;
+            }
+            // К последнему сообщению добавляем подвал с балансом
+            if (i === chunks.length - 1) {
+                textToSend += `\n\n💰 Стоимость: ${cfg.cost} кр. | Баланс: ${finalBalance} кр.`;
+            }
+            
+            await ctx.reply(textToSend);
         }
+        
     } catch (error) {
         console.error('Gemini SDK Error:', error.message);
-        ctx.reply('🤖 Модель перегружена или отклонила запрос. Попробуйте другую версию.');
+        ctx.reply('🤖 Модель перегружена или запрос отклонен фильтрами безопасности. Попробуйте переформулировать или выбрать версию Flash.');
     }
 }
 
 bot.on('photo', (ctx) => performAIRequest(ctx, true));
 bot.on('text', (ctx) => {
+    // Игнорируем нажатия на кнопки главного меню, чтобы не отправлять их в нейросеть
     if (ctx.message.text === '🤖 Выбор модели' || ctx.message.text === '💳 Личный кабинет') return;
     performAIRequest(ctx, false);
 });
