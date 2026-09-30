@@ -17,18 +17,18 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🤖 СПИСОК ОФИЦИАЛЬНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
+// 🤖 СПИСОК АКТУАЛЬНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
 const MODELS = {
     'gemini_15_flash': { 
-        name: 'Gemini 1.5 Flash', 
-        modelId: 'gemini-1.5-flash', 
+        name: 'Gemini Flash', 
+        modelId: 'gemini-2.5-flash', 
         cost: 1,               // 1 запрос = 1 кредит (5 руб)
         maxInputChars: 3000,   // Лимит входных символов
         maxOutputTokens: 1200  // Лимит выходных токенов
     },
     'gemini_15_pro': { 
-        name: 'Gemini 1.5 Pro', 
-        modelId: 'gemini-1.5-pro', 
+        name: 'Gemini Pro', 
+        modelId: 'gemini-2.5-pro', 
         cost: 3,               // 1 запрос = 3 кредита (15 руб)
         maxInputChars: 8000,   // Увеличенный лимит символов для Pro
         maxOutputTokens: 2048  // Увеличенный лимит ответа
@@ -182,8 +182,8 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 1.5 Flash (1 кредит)', 'set_model_gemini_15_flash')],
-                [Markup.button.callback('🧠 Gemini 1.5 Pro (3 кредита)', 'set_model_gemini_15_pro')]
+                [Markup.button.callback('⚡ Gemini Flash (1 кредит)', 'set_model_gemini_15_flash')],
+                [Markup.button.callback('🧠 Gemini Pro (3 кредита)', 'set_model_gemini_15_pro')]
             ])
         }
     );
@@ -216,15 +216,15 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
 bot.action('set_model_gemini_15_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'gemini_15_flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini 1.5 Flash');
-    ctx.reply('✅ Активна модель: *Gemini 1.5 Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
+    await ctx.answerCbQuery('Выбрана модель Gemini Flash');
+    ctx.reply('✅ Активна модель: *Gemini Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
 });
 
 bot.action('set_model_gemini_15_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'gemini_15_pro';
-    await ctx.answerCbQuery('Выбрана модель Gemini 1.5 Pro');
-    ctx.reply('✅ Активна модель: *Gemini 1.5 Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
+    await ctx.answerCbQuery('Выбрана модель Gemini Pro');
+    ctx.reply('✅ Активна модель: *Gemini Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
 });
 
 // Обработчики кнопок оплаты
