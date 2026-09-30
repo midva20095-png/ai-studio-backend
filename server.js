@@ -27,11 +27,11 @@ const MODELS = {
         maxOutputTokens: 1200  // Лимит выходных токенов
     },
     'gemini_15_pro': { 
-        name: 'Gemini Pro', 
-        modelId: 'gemini-2.5-pro', 
+        name: 'Gemini Pro 3.1', 
+        modelId: 'gemini-3.1-pro-preview', 
         cost: 3,               // 1 запрос = 3 кредита (15 руб)
-        maxInputChars: 8000,   // Увеличенный лимит символов для Pro
-        maxOutputTokens: 2048  // Увеличенный лимит ответа
+        maxInputChars: 8000,   // Исходный лимит символов
+        maxOutputTokens: 2048  // Исходный лимит ответа
     }
 };
 
@@ -183,7 +183,7 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
                 [Markup.button.callback('⚡ Gemini Flash (1 кредит)', 'set_model_gemini_15_flash')],
-                [Markup.button.callback('🧠 Gemini Pro (3 кредита)', 'set_model_gemini_15_pro')]
+                [Markup.button.callback('🧠 Gemini Pro 3.1 (3 кредита)', 'set_model_gemini_15_pro')]
             ])
         }
     );
@@ -223,8 +223,8 @@ bot.action('set_model_gemini_15_flash', async (ctx) => {
 bot.action('set_model_gemini_15_pro', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'gemini_15_pro';
-    await ctx.answerCbQuery('Выбрана модель Gemini Pro');
-    ctx.reply('✅ Активна модель: *Gemini Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
+    await ctx.answerCbQuery('Выбрана модель Gemini Pro 3.1');
+    ctx.reply('✅ Активна модель: *Gemini Pro 3.1* (3 кредита / запрос)', { parse_mode: 'Markdown' });
 });
 
 // Обработчики кнопок оплаты
