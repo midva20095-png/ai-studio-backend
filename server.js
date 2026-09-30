@@ -20,55 +20,88 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- МОДЕЛИ ИИ ---
+// --- МОДЕЛИ ИИ (обновлены под актуальные ID 3.x) ---
 const MODELS = {
-    'flash_3_8': { 
-        name: '⚡ Flash 3.8 / Flash-Lite', 
-        modelId: 'gemini-2.5-flash', 
-        type: 'text', 
-        cost: 1, 
+    'flash_3_8': {
+        name: 'Flash 3.8',
+        modelId: 'gemini-3.8-flash',
+        type: 'text',
+        cost: 1,
         maxInputChars: 4000,
-        maxOutputTokens: 800 
+        maxOutputTokens: 2000,
+        buttonLabel: '⚡ Flash 3.8 · 1 🪙',
+        description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽'
     },
-    'pro_3_1': { 
-        name: '🧠 Pro 3.1 / Deep Research', 
-        modelId: 'gemini-2.5-pro', 
-        type: 'text', 
-        cost: 3, 
+    'flash_lite': {
+        name: 'Flash-Lite',
+        modelId: 'gemini-3.8-flash',
+        type: 'text',
+        cost: 1,
+        maxInputChars: 4000,
+        maxOutputTokens: 2000,
+        buttonLabel: '⚡ Flash-Lite · 1 🪙',
+        description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽'
+    },
+    'pro_3_1': {
+        name: 'Pro 3.1',
+        modelId: 'gemini-3.1-pro', // Исправлено с 2.5 на актуальную
+        type: 'text',
+        cost: 3,
         maxInputChars: 20000,
-        maxOutputTokens: 3200 
+        maxOutputTokens: 8000,
+        buttonLabel: '🧠 Pro 3.1 · 3 🪙',
+        description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽'
     },
-    'nano_banana_2': { 
-        name: '🎨 Nano Banana 2 (HD)', 
-        modelId: 'gemini-2.5-flash', // Используем стабильную модель с поддержкой генерации картинок или текст/модали
-        type: 'image', 
-        qualityPrompt: 'HD quality, clear details, high resolution', 
-        cost: 2, 
-        maxInputChars: 800
+    'deep_research': {
+        name: 'Deep Research',
+        modelId: 'gemini-3.1-pro', // Исправлено с 2.5 на актуальную
+        type: 'text',
+        cost: 3,
+        maxInputChars: 20000,
+        maxOutputTokens: 8000,
+        buttonLabel: '🔎 Deep Research · 3 🪙',
+        description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽'
     },
-    'nano_banana_pro': { 
-        name: '🍌 Nano Banana Pro (Ultra-HD)', 
-        modelId: 'gemini-2.5-flash', 
-        type: 'image', 
-        qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
-        cost: 4, 
-        maxInputChars: 800
+    'nano_banana_2': {
+        name: 'Nano Banana 2',
+        modelId: 'gemini-3.1-flash-image',
+        type: 'image',
+        cost: 2,
+        maxInputChars: 800,
+        quality: 'HD',
+        qualityPrompt: 'HD quality, clear details, high resolution',
+        buttonLabel: '🖼 Nano Banana 2 · 2 🪙',
+        description: 'HD · описание до 800 символов · 10 ₽'
     },
-    'nano_banana_4k': { 
-        name: '💎 Nano Banana 4K (Премиум)', 
-        modelId: 'gemini-2.5-pro', 
-        type: 'image', 
-        qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
-        cost: 10, 
-        maxInputChars: 800
+    'nano_banana_pro': {
+        name: 'Nano Banana Pro',
+        modelId: 'gemini-3.1-flash-image',
+        type: 'image',
+        cost: 4,
+        maxInputChars: 800,
+        quality: 'Ultra-HD',
+        qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details',
+        buttonLabel: '✨ Nano Banana Pro · 4 🪙',
+        description: 'Ultra-HD · описание до 800 символов · 20 ₽'
+    },
+    'nano_banana_4k': {
+        name: 'Nano Banana 4K',
+        modelId: 'gemini-3.1-flash-image',
+        type: 'image',
+        cost: 10,
+        maxInputChars: 800,
+        quality: 'Премиум 4K фотореализм',
+        qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography',
+        buttonLabel: '💎 Nano Banana 4K · 10 🪙',
+        description: 'Премиум 4K фотореализм · описание до 800 символов · 50 ₽'
     }
 };
 
 const PAYMENT_PACKAGES = [
-    { id: 'pay_150', name: '🟢 Старт', priceRub: 150, coins: 30 },
-    { id: 'pay_500', name: '🔵 Стандарт', priceRub: 500, coins: 100 },
-    { id: 'pay_1000', name: '🟣 Люкс', priceRub: 1000, coins: 200 },
-    { id: 'pay_2500', name: '👑 VIP', priceRub: 2500, coins: 500 }
+    { id: 'start', name: 'Старт', priceRub: 150, coins: 30, baseCoins: 30, bonusCoins: 0 },
+    { id: 'standard', name: 'Стандарт', priceRub: 500, coins: 100, baseCoins: 100, bonusCoins: 0 },
+    { id: 'lux', name: 'Люкс', priceRub: 1000, coins: 250, baseCoins: 200, bonusCoins: 50 },
+    { id: 'vip', name: 'VIP', priceRub: 2500, coins: 650, baseCoins: 500, bonusCoins: 150 }
 ];
 
 const userState = {};
@@ -196,7 +229,7 @@ bot.hears('⚙️ Настройки', (ctx) => {
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const currentRatio = userState[userId].aspect_ratio;
     
-    safeReply(ctx, `⚙️ **Настройки генерации изображений:**\n\nТекущее соотношение сторон: **${currentRatio}**\nВыберите нужный размер:`, Markup.inlineKeyboard([
+    safeReply(ctx, `⚙️️ **Настройки генерации изображений:**\n\nТекущее соотношение сторон: **${currentRatio}**\nВыберите нужный размер:`, Markup.inlineKeyboard([
         [Markup.button.callback(`Квадрат (1:1) ${currentRatio === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
         [Markup.button.callback(`Горизонтально (16:9) ${currentRatio === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
         [Markup.button.callback(`Вертикально (9:16) ${currentRatio === '9:16' ? '✅' : ''}`, 'ratio_9:16')]
@@ -211,8 +244,8 @@ bot.hears('💳 Баланс / Пополнить', async (ctx) => {
         Markup.inlineKeyboard([
             [Markup.button.callback('🟢 Старт: 150 ₽ (30 монет)', 'pay_150')],
             [Markup.button.callback('🔵 Стандарт: 500 ₽ (100 монет)', 'pay_500')],
-            [Markup.button.callback('🟣 Люкс: 1000 ₽ (200 монет)', 'pay_1000')],
-            [Markup.button.callback('👑 VIP: 2500 ₽ (500 монет)', 'pay_2500')]
+            [Markup.button.callback('🟣 Люкс: 1000 ₽ (250 монет)', 'pay_1000')],
+            [Markup.button.callback('👑 VIP: 2500 ₽ (650 монет)', 'pay_2500')]
         ])
     );
 });
@@ -221,7 +254,7 @@ bot.hears('ℹ️ Профиль', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     const state = userState[userId] || { model: 'flash_3_8', aspect_ratio: '1:1' };
-    const model = MODELS[state.model];
+    const model = MODELS[state.model] || MODELS['flash_3_8'];
     
     safeReply(
         ctx,
@@ -251,15 +284,19 @@ bot.action(/ratio_(.+)/, async (ctx) => {
     await ctx.editMessageText(`✅ Формат генерации изображений установлен на: **${ratio}**`, { parse_mode: 'Markdown' });
 });
 
-bot.action(/^pay_(\d+)$/, async (ctx) => {
+bot.action(/^pay_(start|standard|lux|vip|150|500|1000|2500)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    const amount = parseInt(ctx.match[1]);
-    const packageInfo = PAYMENT_PACKAGES.find(p => p.priceRub === amount);
+    const param = ctx.match[1];
+    let packageInfo = PAYMENT_PACKAGES.find(p => p.id === param || p.priceRub.toString() === param);
+    if (!packageInfo) {
+        const mapOld = { '150': 'start', '500': 'standard', '1000': 'lux', '2500': 'vip' };
+        packageInfo = PAYMENT_PACKAGES.find(p => p.id === mapOld[param]);
+    }
     if (!packageInfo) return ctx.reply('❌ Ошибка: пакет не найден.');
     await generatePaymentLink(ctx, ctx.from.id, packageInfo.priceRub, packageInfo.coins);
 });
 
-// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ ---
+// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ (Только Interactions API) ---
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -270,12 +307,12 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const userConfig = userState[userId];
-    const modelData = MODELS[userConfig.model];
+    const modelData = MODELS[userConfig.model] || MODELS['flash_3_8'];
 
     if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(
             ctx, 
-            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
+            `⛔️️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
         );
     }
 
@@ -292,49 +329,61 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         if (modelData.type === 'text') {
             await ctx.sendChatAction('typing');
             
-            // Корректная сборка контента для @google/genai SDK
-            let contents = promptText;
+            let inputPayload = [];
             if (photoBuffer) {
-                contents = [
-                    {
-                        inlineData: {
-                            mimeType: 'image/jpeg',
-                            data: photoBuffer.toString('base64')
-                        }
-                    },
-                    promptText || 'Опиши это изображение.'
-                ];
+                inputPayload.push({
+                    type: 'image',
+                    mime_type: 'image/jpeg',
+                    data: photoBuffer.toString('base64')
+                });
             }
+            inputPayload.push({ type: 'text', text: promptText || 'Опиши это изображение.' });
 
-            const response = await ai.models.generateContent({
+            // Строго Interactions API (без generateContent)
+            const interaction = await ai.interactions.create({
                 model: modelData.modelId,
-                contents: contents,
-                config: {
-                    maxOutputTokens: modelData.maxOutputTokens
-                }
+                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
             });
 
-            const replyText = response.text || 'Не удалось получить ответ.';
+            const replyText = interaction.text || interaction.outputMessage || 'Не удалось получить ответ.';
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
             await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
 
         } else if (modelData.type === 'image') {
-            await ctx.sendChatAction('typing');
+            await ctx.sendChatAction('upload_photo');
             
             const selectedRatio = userConfig.aspect_ratio || '1:1';
-            const fullPrompt = `${promptText || 'Сгенерируй изображение'}. Стиль и качество: ${modelData.qualityPrompt}, Соотношение сторон: ${selectedRatio}`;
+            let inputPayload = [];
+            
+            const fullPrompt = `${promptText || 'Сгенерируй изображение'}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
+            inputPayload.push({ type: 'text', text: fullPrompt });
+            
+            if (photoBuffer) {
+                inputPayload.push({
+                    type: 'image',
+                    mime_type: 'image/jpeg',
+                    data: photoBuffer.toString('base64')
+                });
+            }
 
-            // Используем стандартный генератор текста/модели для описания или текстового промпта
-            const response = await ai.models.generateContent({
-                model: modelData.modelId,
-                contents: fullPrompt,
+            const interaction = await ai.interactions.create({
+                model: modelData.modelId, 
+                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
             });
 
-            const replyText = response.text || 'Изображение не удалось сформировать.';
+            let imgBuffer = null;
+            if (interaction.outputImage && interaction.outputImage.data) {
+                imgBuffer = Buffer.from(interaction.outputImage.data, 'base64');
+            }
+
+            if (!imgBuffer) {
+                throw new Error('Изображение не было возвращено моделью.');
+            }
+
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
+            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
             
-            // Если модель вернула текстовое описание или результат, отправляем его пользователю
-            await safeReply(ctx, `🎨 *Результат генерации (${modelData.name}):*\n\n${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
+            await safeReplyWithPhoto(ctx, imgBuffer, caption);
         }
 
     } catch (error) {
@@ -371,10 +420,6 @@ if (RENDER_EXTERNAL_URL) {
     bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
         console.log(`Webhook установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
     });
-} else {
-    // Локальный запуск через polling, если нет вебхука
-    bot.launch();
-    console.log('🤖 Бот запущен в режиме Long Polling');
 }
 
 app.get('/', (req, res) => res.send('AI Studio Bot Server is running!'));
