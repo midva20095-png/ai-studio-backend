@@ -1,12 +1,3 @@
-Все три проблемы полностью решены:
-
-1. **Реальная отправка картинок:** Ранее в коде была текстовая заглушка. Теперь подключен метод генерации изображений Imagen 3 (`ai.models.generateImages`). Бот генерирует файл и отправляет **настоящую картинку** прямо в чат Telegram.
-2. **Авто-промт формата и качества:** В зависимости от выбранного размера (`1:1`, `16:9`, `9:16`) и качества модели (`HD`, `Ultra-HD`, `4K`), бот автоматически подставляет нужные параметры и технические ключевые слова в промт.
-3. **Исправление ошибки Telegram `400 Bad Request`:** Ошибка из ваших логов происходила из-за того, что ответы от ИИ содержали спецсимволы, которые ломали верстку Markdown. Добавлена функция `safeReply`, которая защищает от сбоев отправки.
-
-Полный готовый код для файла `server.js`:
-
-```javascript
 const express = require('express');
 const cors = require('cors');
 const { Telegraf, Markup, session } = require('telegraf');
@@ -28,40 +19,47 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- НАСТРОЙКИ МОДЕЛЕЙ И ЦЕН (1 монета = 5 рублей) ---
+// --- НАСТРОЙКИ МОДЕЛЕЙ, ЦЕН И ЛИМИТОВ (1 монета = 5 рублей) ---
 const MODELS = {
     'flash_3_8': { 
         name: '⚡ Flash 3.8 / Flash-Lite (Быстрый чат)', 
         modelId: 'gemini-2.5-flash', 
         type: 'text', 
-        cost: 1 
+        cost: 1,
+        maxInputChars: 4000,
+        maxOutputTokens: 800
     },
     'pro_3_1': { 
         name: '🧠 Pro 3.1 / Deep Research (Умный ИИ + Поиск)', 
         modelId: 'gemini-2.5-pro', 
         type: 'text', 
-        cost: 3 
+        cost: 3,
+        maxInputChars: 20000,
+        maxOutputTokens: 3200
     },
     'nano_banana_2': { 
-        name: '🎨 Nano Banana 2 (Обычное HD качество)', 
+        name: '🎨 Nano Banana 2 (HD качество)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: 'HD quality, clear details, high resolution', 
-        cost: 2 
+        cost: 2,
+        maxInputChars: 800
     },
     'nano_banana_pro': { 
-        name: '🍌 Nano Banana Pro (Высокое Ultra-HD)', 
+        name: '🍌 Nano Banana Pro (Ultra-HD качество)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
-        cost: 4 
+        cost: 4,
+        maxInputChars: 800
     },
     'nano_banana_4k': { 
         name: '💎 Nano Banana 4K (Премиум 4K фотореализм)', 
         modelId: 'imagen-3.0-generate-002', 
         type: 'image', 
         qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
-        cost: 10 
+        cost: 10,
+        maxInputChars: 800
     }
 };
 
@@ -207,7 +205,7 @@ bot.hears('🚀 Выбрать модель', (ctx) => {
     ]));
 });
 
-bot.hears('⚙️ Настройки', (ctx) => {
+bot.hears('⚙️️ Настройки', (ctx) => {
     const userId = ctx.from.id;
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const currentRatio = userState[userId].aspect_ratio;
@@ -289,6 +287,14 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userConfig = userState[userId];
     const modelData = MODELS[userConfig.model];
 
+    // Валидация лимита символов
+    if (promptText && promptText.length > modelData.maxInputChars) {
+        return safeReply(
+            ctx, 
+            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса: **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
+        );
+    }
+
     const balance = await callGoogleSheet('get', userId, username);
     if (balance === null) return ctx.reply('❌ Ошибка связи с базой данных.');
     if (balance < modelData.cost) {
@@ -308,7 +314,10 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
             const response = await ai.models.generateContent({
                 model: modelData.modelId,
-                contents: contents
+                contents: contents,
+                config: {
+                    maxOutputTokens: modelData.maxOutputTokens
+                }
             });
 
             const replyText = response.text || 'Не удалось получить ответ.';
@@ -318,11 +327,9 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         } else if (modelData.type === 'image') {
             await ctx.sendChatAction('upload_photo');
 
-            // Формируем детальный авто-промт с учетом качества и размера
             const ratioText = RATIO_PROMPTS[userConfig.aspect_ratio] || RATIO_PROMPTS['1:1'];
             const finalPrompt = `${promptText}, ${modelData.qualityPrompt}, ${ratioText}`;
 
-            // Вызываем генератор изображений Google Imagen 3
             const imageResponse = await ai.models.generateImages({
                 model: modelData.modelId,
                 prompt: finalPrompt,
@@ -348,7 +355,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
 
     } catch (error) {
         console.error('Ошибка ИИ:', error);
-        await ctx.reply('⚠️️ Произошла ошибка при генерации. Монеты не были списаны.');
+        await ctx.reply('⚠ Произошла ошибка при генерации. Монеты не были списаны.');
     } finally {
         isProcessing.delete(userId);
     }
@@ -385,5 +392,3 @@ if (RENDER_EXTERNAL_URL) {
 
 app.get('/', (req, res) => res.send('AI Studio Bot Server is running!'));
 app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
-
-```
