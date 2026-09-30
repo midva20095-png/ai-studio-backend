@@ -7,10 +7,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Конфигурация из переменных окружения (ВНИМАНИЕ: Токены лучше перенести в process.env на Render!)
-const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const YUKASSA_SHOP_ID = '1120841'; 
-const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+// Конфигурация из переменных окружения
+const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA'; // Перенеси в process.env на проде
+const YUKASSA_SHOP_ID = '1120841'; // Перенеси в process.env на проде
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk'; // Перенеси в process.env на проде
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -21,47 +21,29 @@ app.use(cors());
 app.use(express.json());
 
 /**
- * 🤖 ПЕРЕЧЕНЬ МОДЕЛЕЙ
- * Подключены 3 актуальных движка: 
- * - gemini-1.5-pro (Самая умная)
- * - gemini-1.5-flash (Оптимальная)
- * - gemini-1.5-flash-8b (Самая быстрая для Lite-версий)
+ * 🤖 ПЕРЕЧЕНЬ МОДЕЛЕЙ (ТОЛЬКО РЕАЛЬНЫЕ И АКТУАЛЬНЫЕ)
+ * Доступны по платному ключу Gemini API.
  */
 const MODELS = {
-    'g38f': { name: 'Gemini 3.8 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g38l': { name: 'Gemini 3.8 Live', cost: 2, id: 'gemini-1.5-flash' },
-    'g38th': { name: 'Gemini 3.8 Live Thinking', cost: 3, id: 'gemini-1.5-pro' },
-    'g38tts': { name: 'Gemini 3.8 Flash TTS', cost: 1.5, id: 'gemini-1.5-flash' },
-    'g38ttsl': { name: 'Gemini 3.8 Flash-Lite TTS', cost: 0.5, id: 'gemini-1.5-flash-8b' },
-    'g37f': { name: 'Gemini 3.7 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g36f': { name: 'Gemini 3.6 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g35f': { name: 'Gemini 3.5 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g35fl': { name: 'Gemini 3.5 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-8b' },
-    'g31f': { name: 'Gemini 3.1 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-8b' },
-    'nbp': { name: 'Нано Банан Про', cost: 3, id: 'gemini-1.5-pro' },
-    'nb2': { name: 'Нано Банан 2', cost: 2, id: 'gemini-1.5-pro' },
-    'nb2l': { name: 'Nano Banana 2 Lite', cost: 2, id: 'gemini-1.5-flash-8b' },
-    'g31p': { name: 'Gemini 3.1 Pro', cost: 3.5, id: 'gemini-1.5-pro' },
-    'g3f': { name: 'Gemini 3 Flash', cost: 1, id: 'gemini-1.5-flash' },
-    'g35t': { name: 'Gemini 3.5 Транскрипция', cost: 1, id: 'gemini-1.5-flash' },
-    'g35translate': { name: 'Gemini 3.5 Live Translate', cost: 2.5, id: 'gemini-1.5-flash' },
-    'g31live': { name: 'Gemini 3.1 Flash Live', cost: 1.5, id: 'gemini-1.5-flash' },
-    'g31tts': { name: 'Gemini 3.1 Flash TTS', cost: 1, id: 'gemini-1.5-flash' },
-    'gomni': { name: 'Gemini Omni Flash', cost: 4, id: 'gemini-1.5-pro' }
+    'flash': { name: 'Gemini 1.5 Flash', cost: 1, id: 'gemini-1.5-flash', desc: 'Быстрая и универсальная' },
+    'pro': { name: 'Gemini 1.5 Pro', cost: 4, id: 'gemini-1.5-pro', desc: 'Самая мощная, для сложных задач' },
+    'flash8b': { name: 'Gemini 1.5 Flash-8b', cost: 0.5, id: 'gemini-1.5-flash-8b', desc: 'Сверхбыстрая для простых вопросов' },
+    // Экспериментальные модели (если они включены в твоем API Console):
+    'exp1': { name: 'Gemini Exp (Experimental)', cost: 3, id: 'gemini-exp-1206', desc: 'Новейшая экспериментальная модель' }
 };
 
-const userState = {}; // Сохранение выбора в памяти сессии
+const userState = {}; // Сохранение выбора в памяти сессии (key: uid, value: modelKey)
 
-// --- МОДУЛЬ GOOGLE TABLES ---
+// --- МОДУЛЬ GOOGLE TABLES (База данных) ---
 async function manageSheets(action, uid, username = '', amount = 0) {
     try {
         const response = await axios.post(GOOGLE_SCRIPT_URL, {
             action, userId: String(uid), username, amount
         });
-        return response.data.balance;
+        return response.data.balance; // Возвращает актуальный баланс
     } catch (e) {
         console.error('Sheet Error:', e.message);
-        return null;
+        return null; // В случае ошибки соединения
     }
 }
 
@@ -110,15 +92,30 @@ bot.start(async (ctx) => {
     });
 });
 
-// ГЕНЕРАЦИЯ КНОПОК ДЛЯ ВСЕХ 20 МОДЕЛЕЙ
+// ГЕНЕРАЦИЯ КНОПОК ДЛЯ ВЫБОРА МОДЕЛИ (Компактный вид)
 bot.hears('🤖 Выбор модели', async (ctx) => {
-    const current = userState[ctx.from.id] || 'g38f';
-    const buttons = Object.keys(MODELS).map(key => {
-        const check = key === current ? '🔹 ' : '';
-        return [Markup.button.callback(`${check}${MODELS[key].name} (${MODELS[key].cost} кр.)`, `use_${key}`)];
+    const current = userState[ctx.from.id] || 'flash';
+    
+    // Создаем кнопки. Формат: [ [кнопка1, кнопка2], [кнопка3, кнопка4] ]
+    const buttons = [];
+    const modelKeys = Object.keys(MODELS);
+    
+    for (let i = 0; i < modelKeys.length; i += 2) {
+        const row = [];
+        for (let j = 0; j < 2 && i + j < modelKeys.length; j++) {
+            const key = modelKeys[i + j];
+            const check = key === current ? '✅ ' : '';
+            row.push(Markup.button.callback(`${check}${MODELS[key].name} (${MODELS[key].cost} кр)`, `use_${key}`));
+        }
+        buttons.push(row);
+    }
+
+    let text = '🎯 <b>Выберите активную нейросеть:</b>\n\n';
+    Object.values(MODELS).forEach(m => {
+        text += `• <b>${m.name}</b>: ${m.desc} <i>(${m.cost} кр/запрос)</i>\n`;
     });
     
-    ctx.reply('🎯 <b>Выберите активную нейросеть:</b>', {
+    ctx.reply(text, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard(buttons)
     });
@@ -129,7 +126,20 @@ bot.action(/^use_(.+)$/, async (ctx) => {
     if (MODELS[modelKey]) {
         userState[ctx.from.id] = modelKey;
         await ctx.answerCbQuery(`Выбрана модель: ${MODELS[modelKey].name}`);
-        ctx.reply(`✅ Модель <b>${MODELS[modelKey].name}</b> успешно активирована!`, { parse_mode: 'HTML' });
+        
+        // Обновляем сообщение с галочкой, чтобы пользователь видел изменение
+        const buttons = [];
+        const modelKeys = Object.keys(MODELS);
+        for (let i = 0; i < modelKeys.length; i += 2) {
+            const row = [];
+            for (let j = 0; j < 2 && i + j < modelKeys.length; j++) {
+                const key = modelKeys[i + j];
+                const check = key === modelKey ? '✅ ' : '';
+                row.push(Markup.button.callback(`${check}${MODELS[key].name} (${MODELS[key].cost} кр)`, `use_${key}`));
+            }
+            buttons.push(row);
+        }
+        await ctx.editMessageReplyMarkup({ inline_keyboard: buttons }).catch(e => console.log(e));
     }
 });
 
@@ -154,12 +164,15 @@ bot.action(/^pay_(\d+)$/, async (ctx) => {
 // --- ОСНОВНАЯ ОБРАБОТКА AI (Gemini Official) ---
 async function performAIRequest(ctx, isMedia = false) {
     const uid = ctx.from.id;
-    const currentKey = userState[uid] || 'g38f';
+    const currentKey = userState[uid] || 'flash'; // Flash по умолчанию
     const cfg = MODELS[currentKey];
 
+    // 1. Проверяем текущий баланс ПЕРЕД запросом
     const currentBal = await manageSheets('get', uid, ctx.from.username);
-    if (currentBal === null) return ctx.reply('⚠️ Ошибка соединения с базой данных.');
-    if (currentBal < cfg.cost) return ctx.reply(`❌ Недостаточно средств для этой модели (${cfg.cost} кр.). Пополните баланс в Личном кабинете.`);
+    if (currentBal === null) return ctx.reply('⚠️ Ошибка соединения с базой данных (Google Таблицы).');
+    if (currentBal < cfg.cost) {
+        return ctx.reply(`❌ Недостаточно средств для модели <b>${cfg.name}</b>.\nСтоимость: ${cfg.cost} кр.\nВаш баланс: ${currentBal} кр.\n\nПополните баланс в Личном кабинете.`, { parse_mode: 'HTML' });
+    }
 
     try {
         await ctx.sendChatAction('typing');
@@ -178,26 +191,32 @@ async function performAIRequest(ctx, isMedia = false) {
             promptData = ctx.message.text;
         }
 
+        // 2. Отправляем запрос в Google API
         const result = await activeModel.generateContent(promptData);
         const finalResponse = result.response.text();
         
-        // Списываем кредиты только после успешного ответа
+        // 3. СПИСЫВАЕМ КРЕДИТЫ (только если ответ получен без ошибок)
+        // Передаем отрицательное значение (-cfg.cost) в action 'update'
         const finalBalance = await manageSheets('update', uid, '', -cfg.cost);
         
+        if (finalBalance === null) {
+            console.error("Критическая ошибка: Ответ отправлен, но кредиты не списаны!");
+        }
+
+        // 4. Отправляем результат пользователю
         // Разбивка ответа, если он превышает лимит Telegram (4096 символов)
-        // Бьем по 3900 символов, чтобы осталось место для подписи
-        const chunks = finalResponse.match(/[\s\S]{1,3900}/g) || ["(Пустой ответ)"];
+        const chunks = finalResponse.match(/[\s\S]{1,3900}/g) || ["(Пустой ответ от нейросети)"];
         
         for (let i = 0; i < chunks.length; i++) {
             let textToSend = chunks[i];
             
-            // К первому сообщению добавляем заголовок
             if (i === 0) {
                 textToSend = `🤖 Модель: ${cfg.name}\n\n` + textToSend;
             }
-            // К последнему сообщению добавляем подвал с балансом
             if (i === chunks.length - 1) {
-                textToSend += `\n\n💰 Стоимость: ${cfg.cost} кр. | Баланс: ${finalBalance} кр.`;
+                // Если баланс не удалось получить, показываем "Ошибка БД"
+                const balanceDisplay = finalBalance !== null ? finalBalance : "Ошибка БД";
+                textToSend += `\n\n💰 Списано: ${cfg.cost} кр. | Баланс: ${balanceDisplay} кр.`;
             }
             
             await ctx.reply(textToSend);
@@ -205,13 +224,13 @@ async function performAIRequest(ctx, isMedia = false) {
         
     } catch (error) {
         console.error('Gemini SDK Error:', error.message);
-        ctx.reply('🤖 Модель перегружена или запрос отклонен фильтрами безопасности. Попробуйте переформулировать или выбрать версию Flash.');
+        ctx.reply(`🤖 Ошибка генерации: Модель отклонила запрос или перегружена.\n\nДетали: ${error.message}\n\n<i>Кредиты не списаны.</i>`, { parse_mode: 'HTML' });
     }
 }
 
 bot.on('photo', (ctx) => performAIRequest(ctx, true));
 bot.on('text', (ctx) => {
-    // Игнорируем нажатия на кнопки главного меню, чтобы не отправлять их в нейросеть
+    // Игнорируем нажатия на кнопки главного меню
     if (ctx.message.text === '🤖 Выбор модели' || ctx.message.text === '💳 Личный кабинет') return;
     performAIRequest(ctx, false);
 });
