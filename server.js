@@ -60,7 +60,7 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
     }
 }
 
-// 2. ИНТЕГРАЦИЯ С ЮKASSA
+// 2. ИНТЕГРАЦИЯ С ЮKASSA И СОЗДАНИЕ ССЫЛКИ
 async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
@@ -84,32 +84,19 @@ async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
         });
 
         const confirmationUrl = response.data.confirmation.confirmation_url;
-        const paymentId = response.data.id;
 
-        const sentMessage = await ctx.reply(
+        return ctx.reply(
             `💳 *Ссылка на оплату создана!*\n\n` +
-            `💵 Сумма: *${amountRub} руб.*\n` +
+            `💵 Сумма к оплате: *${amountRub} руб.*\n` +
             `🪙 Кредитов к зачислению: *${creditsCount}*\n\n` +
-            `⚠️ Ссылка действительна 15 минут. Оплатите по ссылке и нажмите «🔄 Проверить оплату»:`,
+            `Перейдите по ссылке ниже для оплаты. После успешного платежа кредиты зачислятся автоматически!`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
-                    [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, confirmationUrl)],
-                    [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentId}`)]
+                    [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, confirmationUrl)]
                 ])
             }
         );
-
-        // Авто-удаление сообщения с кнопкой оплаты через 15 минут для безопасности
-        setTimeout(async () => {
-            if (!processedPayments.has(paymentId)) {
-                try {
-                    await ctx.telegram.deleteMessage(sentMessage.chat.id, sentMessage.message_id);
-                } catch (e) {
-                    // Игнорируем, если сообщение уже удалено
-                }
-            }
-        }, 15 * 60 * 1000);
 
     } catch (error) {
         console.error('Ошибка ЮKassa:', error.response?.data || error.message);
@@ -117,19 +104,42 @@ async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
     }
 }
 
-async function checkPaymentStatus(paymentId) {
-    const url = `https://api.yookassa.ru/v3/payments/${paymentId}`;
-    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+// 🌐 АВТОМАТИЧЕСКИЙ ПРИЕМ УВЕДОМЛЕНИЙ ОБ ОПЛАТЕ ОТ ЮKASSA
+app.post('/yookassa-webhook', async (req, res) => {
     try {
-        const response = await axios.get(url, {
-            headers: { 'Authorization': `Basic ${authString}` }
-        });
-        return response.data;
+        const event = req.body.event;
+        const paymentInfo = req.body.object;
+
+        if (event === 'payment.succeeded' && paymentInfo) {
+            const paymentId = paymentInfo.id;
+
+            if (!processedPayments.has(paymentId)) {
+                processedPayments.add(paymentId);
+
+                const userId = paymentInfo.metadata?.user_id;
+                const credits = parseInt(paymentInfo.metadata?.coins) || 1;
+                const amountPaid = paymentInfo.amount?.value || '';
+
+                if (userId) {
+                    const newBalance = await callGoogleSheet('update', userId, '', credits);
+                    
+                    await bot.telegram.sendMessage(
+                        userId,
+                        `✅ *Оплата прошла успешно!*\n\n` +
+                        `💵 Сумма: *${amountPaid} руб.*\n` +
+                        `🪙 Зачислено: *${credits}* кредитов\n` +
+                        `💰 Ваш новый баланс: *${newBalance}* кредитов`,
+                        { parse_mode: 'Markdown' }
+                    );
+                }
+            }
+        }
+        res.status(200).send('OK');
     } catch (error) {
-        console.error('Ошибка проверки платежа:', error.response?.data || error.message);
-        return null;
+        console.error('Ошибка обработки Webhook ЮKassa:', error);
+        res.status(500).send('Error');
     }
-}
+});
 
 // 3. КОМАНДЫ И НАВИГАЦИЯ БОТА
 bot.start(async (ctx) => {
@@ -208,54 +218,6 @@ bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generate
 bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
 bot.action('pay_2500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 2500, 500); });
 bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
-
-// ПРОВЕРКА ОПЛАТЫ С ЗАЩИТОЙ И УДАЛЕНИЕМ КНОПОК
-bot.action(/^check_(.+)$/, async (ctx) => {
-    const paymentId = ctx.match[1];
-    const userId = ctx.from.id;
-
-    if (processedPayments.has(paymentId)) {
-        await ctx.answerCbQuery('⚠️ Этот платеж уже зачислен!', { show_alert: true });
-        try { await ctx.deleteMessage(); } catch(e) {}
-        return;
-    }
-
-    await ctx.answerCbQuery('Проверяем платеж...');
-
-    const paymentInfo = await checkPaymentStatus(paymentId);
-    if (!paymentInfo) {
-        return ctx.reply('❌ Не удалось связаться с ЮKassa. Попробуйте позже.');
-    }
-
-    if (paymentInfo.status === 'succeeded') {
-        processedPayments.add(paymentId); // Фиксируем факт начисления
-
-        const credits = parseInt(paymentInfo.metadata?.coins) || 1;
-        const amountPaid = paymentInfo.amount?.value || '';
-
-        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, credits);
-
-        // Удаляем сообщение с кнопками оплаты
-        try {
-            await ctx.deleteMessage();
-        } catch (e) {
-            // Игнорируем, если не удалось удалить
-        }
-
-        return ctx.reply(
-            `✅ *Платеж успешно подтвержден!*\n\n` +
-            `💵 Сумма: *${amountPaid} руб.*\n` +
-            `🪙 Зачислено: *${credits}* кредитов\n` +
-            `💰 Ваш новый баланс: *${newBalance}* кредитов`,
-            { parse_mode: 'Markdown' }
-        );
-    } else {
-        return ctx.reply(
-            `❌ Платеж еще не прошел (статус: ${paymentInfo.status}).\n` +
-            `Оплатите по ссылке и попробуйте снова.`
-        );
-    }
-});
 
 // 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ С ОГРАНИЧЕНИЯМИ
 bot.on('text', async (ctx) => {
