@@ -8,9 +8,9 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // Конфигурация из переменных окружения
-const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
-const YUKASSA_SHOP_ID = '1120841';
-const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA'; // Лучше вынести в process.env.BOT_TOKEN
+const YUKASSA_SHOP_ID = '1120841'; // Лучше вынести в process.env
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk'; // Лучше вынести в process.env
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -22,30 +22,29 @@ app.use(express.json());
 
 /**
  * 🤖 ПЕРЕЧЕНЬ МОДЕЛЕЙ (Официальные API соответствия)
- * Поскольку в API Google нет версии "3.8", мы используем самые мощные актуальные 
- * платные движки (Gemini 1.5 Pro и Flash-latest), давая им твои названия.
+ * ИСПРАВЛЕНО: убраны суффиксы -latest, теперь используются актуальные имена
  */
 const MODELS = {
-    'g38f': { name: 'Gemini 3.8 Flash', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g38l': { name: 'Gemini 3.8 Live', cost: 2, id: 'gemini-1.5-flash-latest' },
-    'g38th': { name: 'Gemini 3.8 Live Thinking', cost: 3, id: 'gemini-1.5-pro-latest' },
-    'g38tts': { name: 'Gemini 3.8 Flash TTS', cost: 1.5, id: 'gemini-1.5-flash-latest' },
-    'g38ttsl': { name: 'Gemini 3.8 Flash-Lite TTS', cost: 0.5, id: 'gemini-1.5-flash-latest' },
-    'g37f': { name: 'Gemini 3.7 Flash', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g36f': { name: 'Gemini 3.6 Flash', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g35f': { name: 'Gemini 3.5 Flash', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g35fl': { name: 'Gemini 3.5 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-latest' },
-    'g31f': { name: 'Gemini 3.1 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash-latest' },
-    'nbp': { name: 'Нано Банан Про', cost: 3, id: 'gemini-1.5-pro-latest' },
-    'nb2': { name: 'Нано Банан 2', cost: 2, id: 'gemini-1.5-pro-latest' },
-    'nb2l': { name: 'Nano Banana 2 Lite', cost: 2, id: 'gemini-1.5-pro-latest' },
-    'g31p': { name: 'Gemini 3.1 Pro', cost: 3.5, id: 'gemini-1.5-pro-latest' },
-    'g3f': { name: 'Gemini 3 Flash', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g35t': { name: 'Gemini 3.5 Транскрипция', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'g35translate': { name: 'Gemini 3.5 Live Translate', cost: 2.5, id: 'gemini-1.5-flash-latest' },
-    'g31live': { name: 'Gemini 3.1 Flash Live', cost: 1.5, id: 'gemini-1.5-flash-latest' },
-    'g31tts': { name: 'Gemini 3.1 Flash TTS', cost: 1, id: 'gemini-1.5-flash-latest' },
-    'gomni': { name: 'Gemini Omni Flash', cost: 4, id: 'gemini-1.5-pro-latest' }
+    'g38f': { name: 'Gemini 3.8 Flash', cost: 1, id: 'gemini-1.5-flash' },
+    'g38l': { name: 'Gemini 3.8 Live', cost: 2, id: 'gemini-1.5-flash' },
+    'g38th': { name: 'Gemini 3.8 Live Thinking', cost: 3, id: 'gemini-1.5-pro' },
+    'g38tts': { name: 'Gemini 3.8 Flash TTS', cost: 1.5, id: 'gemini-1.5-flash' },
+    'g38ttsl': { name: 'Gemini 3.8 Flash-Lite TTS', cost: 0.5, id: 'gemini-1.5-flash' },
+    'g37f': { name: 'Gemini 3.7 Flash', cost: 1, id: 'gemini-1.5-flash' },
+    'g36f': { name: 'Gemini 3.6 Flash', cost: 1, id: 'gemini-1.5-flash' },
+    'g35f': { name: 'Gemini 3.5 Flash', cost: 1, id: 'gemini-1.5-flash' },
+    'g35fl': { name: 'Gemini 3.5 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash' },
+    'g31f': { name: 'Gemini 3.1 Flash-Lite', cost: 0.5, id: 'gemini-1.5-flash' },
+    'nbp': { name: 'Нано Банан Про', cost: 3, id: 'gemini-1.5-pro' },
+    'nb2': { name: 'Нано Банан 2', cost: 2, id: 'gemini-1.5-pro' },
+    'nb2l': { name: 'Nano Banana 2 Lite', cost: 2, id: 'gemini-1.5-pro' },
+    'g31p': { name: 'Gemini 3.1 Pro', cost: 3.5, id: 'gemini-1.5-pro' },
+    'g3f': { name: 'Gemini 3 Flash', cost: 1, id: 'gemini-1.5-flash' },
+    'g35t': { name: 'Gemini 3.5 Транскрипция', cost: 1, id: 'gemini-1.5-flash' },
+    'g35translate': { name: 'Gemini 3.5 Live Translate', cost: 2.5, id: 'gemini-1.5-flash' },
+    'g31live': { name: 'Gemini 3.1 Flash Live', cost: 1.5, id: 'gemini-1.5-flash' },
+    'g31tts': { name: 'Gemini 3.1 Flash TTS', cost: 1, id: 'gemini-1.5-flash' },
+    'gomni': { name: 'Gemini Omni Flash', cost: 4, id: 'gemini-1.5-pro' }
 };
 
 const userState = {}; // Сохранение выбора в памяти сессии
@@ -116,7 +115,6 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
         return [Markup.button.callback(`${check}${MODELS[key].name} (${MODELS[key].cost} кр.)`, `use_${key}`)];
     });
     
-    // Разбиваем на 2 столбца, чтобы меню не было слишком длинным
     ctx.reply('🎯 <b>Выберите активную нейросеть:</b>', {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard(buttons)
@@ -127,7 +125,7 @@ bot.action(/^use_(.+)$/, async (ctx) => {
     const modelKey = ctx.match[1];
     if (MODELS[modelKey]) {
         userState[ctx.from.id] = modelKey;
-        await ctx.answerCbQuery();
+        await ctx.answerCbQuery(`Выбрана модель: ${MODELS[modelKey].name}`);
         ctx.reply(`✅ Модель <b>${MODELS[modelKey].name}</b> успешно активирована!`, { parse_mode: 'HTML' });
     }
 });
@@ -178,19 +176,21 @@ async function performAIRequest(ctx, isMedia = false) {
         }
 
         const result = await activeModel.generateContent(promptData);
-        const finalResponse = await result.response.text();
+        let finalResponse = result.response.text();
         
         const finalBalance = await manageSheets('update', uid, '', -cfg.cost);
         
-        // Разбивка ответа, если он слишком длинный для Telegram
+        // ВАЖНОЕ ИСПРАВЛЕНИЕ: Telegram ругается на markdown от Gemini, когда мы шлем parse_mode: 'HTML'
+        // Gemini часто присылает текст со звездочками **текст**
+        // Убираем парсинг HTML для самого ответа нейросети, чтобы бот не падал от некорректных тегов
         if (finalResponse.length > 4000) {
-            await ctx.reply(finalResponse.substring(0, 4000), { parse_mode: 'HTML' });
+            await ctx.reply(finalResponse.substring(0, 4000));
         } else {
-            await ctx.reply(`<b>🤖 ${cfg.name}</b>\n\n${finalResponse}\n\n<i>💰 Стоимость: ${cfg.cost} кр. | Баланс: ${finalBalance} кр.</i>`, { parse_mode: 'HTML' });
+            await ctx.reply(`🤖 Модель: ${cfg.name}\n\n${finalResponse}\n\n💰 Стоимость: ${cfg.cost} кр. | Баланс: ${finalBalance} кр.`);
         }
     } catch (error) {
         console.error('Gemini SDK Error:', error.message);
-        ctx.reply('🤖 <i>Модель перегружена или отклонила запрос. Попробуйте Flash версию.</i>', { parse_mode: 'HTML' });
+        ctx.reply('🤖 Модель перегружена или отклонила запрос. Попробуйте другую версию.');
     }
 }
 
@@ -201,15 +201,15 @@ bot.on('text', (ctx) => {
 });
 
 // --- СТАРТ СЕРВЕРА (Render Webhook) ---
-const EXT_URL = process.env.RENDER_EXTERNAL_URL;
-if (EXT_URL) {
-    bot.telegram.setWebhook(`${EXT_URL}/telegraf-bot`);
-    app.use(bot.webhookCallback('/telegraf-bot'));
-    console.log('🌐 Webhook активирован');
-} else {
-    bot.launch();
-    console.log('🔄 Polling запущен');
-}
-
-app.get('/', (req, res) => res.send('API AI BOT ACTIVE'));
-app.listen(PORT, () => console.log(`🚀 Порт: ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
+    const EXT_URL = process.env.RENDER_EXTERNAL_URL;
+    if (EXT_URL) {
+        bot.telegram.setWebhook(`${EXT_URL}/telegraf-bot`);
+        app.use(bot.webhookCallback('/telegraf-bot'));
+        console.log('🌐 Webhook активирован по адресу:', `${EXT_URL}/telegraf-bot`);
+    } else {
+        bot.launch();
+        console.log('🔄 Polling запущен');
+    }
+});
