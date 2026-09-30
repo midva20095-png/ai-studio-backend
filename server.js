@@ -17,21 +17,21 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🤖 СПИСОК АКТУАЛЬНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
+// 🤖 СПИСОК АКТУАЛЬНЫХ МОДЕЛЕЙ
 const MODELS = {
     'gemini_15_flash': { 
         name: 'Gemini Flash', 
-        modelId: 'gemini-2.5-flash', 
-        cost: 1,               // 1 запрос = 1 кредит (5 руб)
-        maxInputChars: 3000,   // Лимит входных символов
-        maxOutputTokens: 1200  // Лимит выходных токенов
+        modelId: 'gemini-3.8-flash', // Требование Google API из вашей ошибки
+        cost: 1,               // 1 кредит
+        maxInputChars: 3000,   
+        maxOutputTokens: 1200  
     },
     'gemini_15_pro': { 
         name: 'Gemini Pro 3.1', 
-        modelId: 'gemini-3.1-pro-preview', 
-        cost: 3,               // 1 запрос = 3 кредита (15 руб)
-        maxInputChars: 8000,   // Исходный лимит символов
-        maxOutputTokens: 2048  // Исходный лимит ответа
+        modelId: 'gemini-3.1-pro-preview', // Актуальная Pro модель
+        cost: 3,               // 3 кредита
+        maxInputChars: 8000,   
+        maxOutputTokens: 2048  
     }
 };
 
