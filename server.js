@@ -18,7 +18,7 @@ if (!GEMINI_API_KEY) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// 🤖 СПИСОК МОДЕЛЕЙ (Добавлена Gemini 3.1 Flash Image)
+// 🤖 СПИСОК МОДЕЛЕЙ (С добавленной Gemini 3.1 Flash Image за 3 кредита)
 const MODELS = {
     'gemini_15_flash': { 
         name: 'Gemini Flash', 
@@ -43,15 +43,12 @@ const MODELS = {
     }
 };
 
-// Хранилище выбранных моделей пользователей (в памяти)
 const userModels = {};
 
-// Функция экранирования для MarkdownV2 / Markdown
 function escapeMarkdown(text) {
     return text;
 }
 
-// Функция взаимодействия с Google Таблицей (Базой данных баланса)
 async function callGoogleSheet(action, userId, username = '') {
     if (!GOOGLE_SHEET_WEB_APP_URL) {
         console.warn('⚠️ URL Google Таблицы не задан. Используем режим заглушки (баланс 100 кредитов).');
@@ -71,22 +68,18 @@ async function callGoogleSheet(action, userId, username = '') {
     }
 }
 
-// Главная клавиатура
 function getMainMenu() {
     return Markup.keyboard([
         ['🤖 Выбор модели', '💳 Личный кабинет']
     ]).resize();
 }
 
-// 1. КОМАНДА /start
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username || '';
     
-    // Инициализация пользователя в таблице при первом входе
     await callGoogleSheet('get', userId, username);
-    
-    userModels[userId] = Object.keys(MODELS)[0]; // По умолчанию первая модель
+    userModels[userId] = Object.keys(MODELS)[0];
 
     await ctx.reply(
         `Привет, ${ctx.from.first_name}! 👋\n\n` +
@@ -96,7 +89,6 @@ bot.start(async (ctx) => {
     );
 });
 
-// 2. КНОПКА «Личный кабинет»
 bot.hears('💳 Личный кабинет', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
@@ -117,7 +109,6 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
     );
 });
 
-// 3. КНОПКА «Выбор модели» (Динамическое создание кнопок из словаря MODELS)
 bot.hears('🤖 Выбор модели', async (ctx) => {
     const userId = ctx.from.id;
     const currentModel = userModels[userId] || Object.keys(MODELS)[0];
@@ -135,7 +126,6 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
     });
 });
 
-// Обработка клика по инлайн-кнопке выбора модели
 bot.action(/^set_model_(.+)$/, async (ctx) => {
     const modelKey = ctx.match[1];
     if (!MODELS[modelKey]) {
@@ -153,7 +143,7 @@ bot.action(/^set_model_(.+)$/, async (ctx) => {
     );
 });
 
-// 4. ОБРАБОТКА ИЗОБРАЖЕНИЙ (С поддержкой возврата картинок/текста)
+// Обработка фотографий
 bot.on('photo', async (ctx) => {
     const userId = ctx.from.id;
     const caption = (ctx.message.caption || '').trim();
@@ -238,7 +228,7 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// 5. ОБРАБОТКА ТЕКСТА (С поддержкой возврата картинок/текста)
+// Обработка текста
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -315,13 +305,11 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// Запуск бота
 bot.launch().then(() => {
-    console.log('🚀 Бот успешно запущен и готов к работе!');
+    console.log('🚀 Сервер запущен на порту ' + (process.env.PORT || 10000));
 }).catch((err) => {
     console.error('❌ Ошибка запуска бота:', err);
 });
 
-// Корректная остановка
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
