@@ -1,119 +1,385 @@
-export type ModelKey =
-  | 'flash_3_8'
-  | 'flash_lite'
-  | 'pro_3_1'
-  | 'deep_research'
-  | 'nano_banana_2'
-  | 'nano_banana_pro'
-  | 'nano_banana_4k';
+const express = require('express');
+const cors = require('cors');
+const { Telegraf, Markup, session } = require('telegraf');
+const axios = require('axios');
+const { GoogleGenAI, Modality } = require('@google/genai');
 
-export type ModelType = 'text' | 'image';
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-export interface ModelPrice {
-  name: string;
-  type: ModelType;
-  cost: number;
-  maxInputChars: number;
-  maxOutputChars?: number;
-  quality?: string;
-  buttonLabel: string;
-  description: string;
-}
+app.use(cors());
+app.use(express.json());
 
-export const RUB_PER_COIN = 5;
+// --- КОНФИГУРАЦИЯ ---
+const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
+const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 
-export const MODELS: Record<ModelKey, ModelPrice> = {
-  flash_3_8: {
-    name: 'Flash 3.8',
-    type: 'text',
-    cost: 1,
-    maxInputChars: 4000,
-    maxOutputChars: 2000,
-    buttonLabel: '⚡ Flash 3.8 · 1 🪙',
-    description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽',
-  },
-  flash_lite: {
-    name: 'Flash-Lite',
-    type: 'text',
-    cost: 1,
-    maxInputChars: 4000,
-    maxOutputChars: 2000,
-    buttonLabel: '⚡ Flash-Lite · 1 🪙',
-    description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽',
-  },
-  pro_3_1: {
-    name: 'Pro 3.1',
-    type: 'text',
-    cost: 3,
-    maxInputChars: 20000,
-    maxOutputChars: 8000,
-    buttonLabel: '🧠 Pro 3.1 · 3 🪙',
-    description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽',
-  },
-  deep_research: {
-    name: 'Deep Research',
-    type: 'text',
-    cost: 3,
-    maxInputChars: 20000,
-    maxOutputChars: 8000,
-    buttonLabel: '🔎 Deep Research · 3 🪙',
-    description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽',
-  },
-  nano_banana_2: {
-    name: 'Nano Banana 2',
-    type: 'image',
-    cost: 2,
-    maxInputChars: 800,
-    quality: 'HD',
-    buttonLabel: '🖼 Nano Banana 2 · 2 🪙',
-    description: 'HD · описание до 800 символов · 10 ₽',
-  },
-  nano_banana_pro: {
-    name: 'Nano Banana Pro',
-    type: 'image',
-    cost: 4,
-    maxInputChars: 800,
-    quality: 'Ultra-HD',
-    buttonLabel: '✨ Nano Banana Pro · 4 🪙',
-    description: 'Ultra-HD · описание до 800 символов · 20 ₽',
-  },
-  nano_banana_4k: {
-    name: 'Nano Banana 4K',
-    type: 'image',
-    cost: 10,
-    maxInputChars: 800,
-    quality: 'Премиум 4K фотореализм',
-    buttonLabel: '💎 Nano Banana 4K · 10 🪙',
-    description: 'Премиум 4K фотореализм · описание до 800 символов · 50 ₽',
-  },
+const bot = new Telegraf(BOT_TOKEN);
+bot.use(session());
+
+// --- МОДЕЛИ ИИ ---
+const MODELS = {
+    'flash_3_8': { 
+        name: '⚡ Flash 3.8 / Flash-Lite', 
+        modelId: 'gemini-2.5-flash', 
+        type: 'text', 
+        cost: 1, 
+        maxInputChars: 4000,
+        maxOutputTokens: 800 
+    },
+    'pro_3_1': { 
+        name: '🧠 Pro 3.1 / Deep Research', 
+        modelId: 'gemini-2.5-pro', 
+        type: 'text', 
+        cost: 3, 
+        maxInputChars: 20000,
+        maxOutputTokens: 3200 
+    },
+    'nano_banana_2': { 
+        name: '🎨 Nano Banana 2 (HD)', 
+        modelId: 'gemini-3.1-flash-image', 
+        type: 'image', 
+        qualityPrompt: 'HD quality, clear details, high resolution', 
+        cost: 2, 
+        maxInputChars: 800
+    },
+    'nano_banana_pro': { 
+        name: '🍌 Nano Banana Pro (Ultra-HD)', 
+        modelId: 'gemini-3.1-flash-image', 
+        type: 'image', 
+        qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
+        cost: 4, 
+        maxInputChars: 800
+    },
+    'nano_banana_4k': { 
+        name: '💎 Nano Banana 4K (Премиум)', 
+        modelId: 'gemini-3.1-flash-image', 
+        type: 'image', 
+        qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
+        cost: 10, 
+        maxInputChars: 800
+    }
 };
 
-export const PAYMENT_PACKAGES = [
-  { id: 'start', name: 'Старт', priceRub: 150, coins: 30, baseCoins: 30, bonusCoins: 0 },
-  { id: 'standard', name: 'Стандарт', priceRub: 500, coins: 100, baseCoins: 100, bonusCoins: 0 },
-  { id: 'lux', name: 'Люкс', priceRub: 1000, coins: 250, baseCoins: 200, bonusCoins: 50 },
-  { id: 'vip', name: 'VIP', priceRub: 2500, coins: 650, baseCoins: 500, bonusCoins: 150 },
-] as const;
+const PAYMENT_PACKAGES = [
+    { id: 'pay_150', name: '🟢 Старт', priceRub: 150, coins: 30 },
+    { id: 'pay_500', name: '🔵 Стандарт', priceRub: 500, coins: 100 },
+    { id: 'pay_1000', name: '🟣 Люкс', priceRub: 1000, coins: 200 },
+    { id: 'pay_2500', name: '👑 VIP', priceRub: 2500, coins: 500 }
+];
 
-export type PaymentPackageId = (typeof PAYMENT_PACKAGES)[number]['id'];
+const userState = {};
+const isProcessing = new Set();
 
-/** Используйте эту функцию и в интерфейсе, и на сервере. */
-export function validateModelInput(modelKey: string, text: string): ModelPrice {
-  if (!Object.prototype.hasOwnProperty.call(MODELS, modelKey)) {
-    throw new Error('Неизвестная модель.');
-  }
-
-  const model = MODELS[modelKey as ModelKey];
-  const length = Array.from(text).length;
-
-  if (!text.trim()) {
-    throw new Error('Введите текст запроса.');
-  }
-  if (length > model.maxInputChars) {
-    throw new Error(
-      `Для модели ${model.name} максимум ${model.maxInputChars} символов. Сейчас: ${length}. Монеты не списаны.`,
-    );
-  }
-
-  return model;
+async function safeReply(ctx, text, extra = {}) {
+    try {
+        return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
+    } catch (error) {
+        return await ctx.reply(text, extra);
+    }
 }
+
+async function safeReplyWithPhoto(ctx, photoBuffer, caption, extra = {}) {
+    try {
+        return await ctx.replyWithPhoto({ source: photoBuffer }, { caption: caption, parse_mode: 'Markdown', ...extra });
+    } catch (error) {
+        return await ctx.replyWithPhoto({ source: photoBuffer }, { caption: caption, ...extra });
+    }
+}
+
+async function callGoogleSheet(action, userId, username = '', amount = 0) {
+    try {
+        const response = await axios.post(GOOGLE_SCRIPT_URL, {
+            action: action,
+            userId: String(userId),
+            username: username,
+            amount: amount
+        });
+        return response.data.balance;
+    } catch (error) {
+        console.error('Ошибка Google Таблицы:', error.message);
+        return null;
+    }
+}
+
+async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
+    const url = 'https://api.yookassa.ru/v3/payments';
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    
+    const body = {
+        amount: { value: `${amountRub}.00`, currency: 'RUB' },
+        confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' },
+        capture: true,
+        description: `Покупка ${coinsCount} монет (Сумма: ${amountRub} руб)`,
+        metadata: { user_id: String(userId), coins: String(coinsCount) }
+    };
+
+    try {
+        const response = await axios.post(url, body, {
+            headers: {
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/json',
+                'Idempotence-Key': Math.random().toString(36).substring(7)
+            }
+        });
+        return safeReply(
+            ctx,
+            `💳 **Создан счет на оплату**\n\n💵 Сумма: ${amountRub} руб.\n🪙 Монет: ${coinsCount}\n\nОплатите по ссылке ниже, затем нажмите «🔄 Проверить оплату».`,
+            Markup.inlineKeyboard([
+                [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, response.data.confirmation.confirmation_url)],
+                [Markup.button.callback(`🔄 Проверить оплату`, `check_${response.data.id}`)]
+            ])
+        );
+    } catch (error) {
+        console.error('Ошибка ЮKassa:', error.message);
+        return ctx.reply('❌ Ошибка создания платежа.');
+    }
+}
+
+bot.action(/^check_(.+)$/, async (ctx) => {
+    const paymentId = ctx.match[1];
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    
+    await ctx.answerCbQuery('Проверяем платеж...');
+    try {
+        const response = await axios.get(`https://api.yookassa.ru/v3/payments/${paymentId}`, {
+            headers: { 'Authorization': `Basic ${authString}` }
+        });
+        
+        const paymentInfo = response.data;
+        if (paymentInfo.status === 'succeeded') {
+            const coins = parseInt(paymentInfo.metadata?.coins) || 1;
+            const newBalance = await callGoogleSheet('update', ctx.from.id, ctx.from.username || 'User', coins);
+            await ctx.editMessageText(`✅ **Платеж прошел!**\n\nЗачислено: ${coins} 🪙\nТекущий баланс: ${newBalance} 🪙`, { parse_mode: 'Markdown' });
+        } else {
+            await ctx.reply(`❌ Статус платежа: ${paymentInfo.status}. Попробуйте позже.`);
+        }
+    } catch (e) {
+        await ctx.reply('❌ Ошибка проверки платежа.');
+    }
+});
+
+const mainMenuKeyboard = Markup.keyboard([
+    ['🚀 Выбрать модель', '⚙️ Настройки'],
+    ['💳 Баланс / Пополнить', 'ℹ️ Профиль']
+]).resize();
+
+const sendMenu = async (ctx) => {
+    const userId = ctx.from.id;
+    if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    
+    await safeReply(
+        ctx,
+        `👋 **Панель управления AI Studio**\n\nИспользуй нижнее меню для навигации. Отправь текст или описание картинки, чтобы начать.`,
+        mainMenuKeyboard
+    );
+};
+
+bot.start(sendMenu);
+bot.command('menu', sendMenu);
+
+bot.hears('🚀 Выбрать модель', (ctx) => {
+    safeReply(ctx, '🤖 **Выберите нейросеть для работы:**', Markup.inlineKeyboard([
+        [Markup.button.callback('⚡ Flash 3.8 / Flash-Lite (1 🪙 | 5 ₽)', 'model_flash_3_8')],
+        [Markup.button.callback('🧠 Pro 3.1 / Deep Research (3 🪙 | 15 ₽)', 'model_pro_3_1')],
+        [Markup.button.callback('🎨 Nano Banana 2 HD (2 🪙 | 10 ₽)', 'model_nano_banana_2')],
+        [Markup.button.callback('🍌 Nano Banana Pro Ultra-HD (4 🪙 | 20 ₽)', 'model_nano_banana_pro')],
+        [Markup.button.callback('💎 Nano Banana 4K (10 🪙 | 50 ₽)', 'model_nano_banana_4k')]
+    ]));
+});
+
+bot.hears('⚙️ Настройки', (ctx) => {
+    const userId = ctx.from.id;
+    if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    const currentRatio = userState[userId].aspect_ratio;
+    
+    safeReply(ctx, `⚙️ **Настройки генерации изображений:**\n\nТекущее соотношение сторон: **${currentRatio}**\nВыберите нужный размер:`, Markup.inlineKeyboard([
+        [Markup.button.callback(`Квадрат (1:1) ${currentRatio === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
+        [Markup.button.callback(`Горизонтально (16:9) ${currentRatio === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
+        [Markup.button.callback(`Вертикально (9:16) ${currentRatio === '9:16' ? '✅' : ''}`, 'ratio_9:16')]
+    ]));
+});
+
+bot.hears('💳 Баланс / Пополнить', async (ctx) => {
+    const balance = await callGoogleSheet('get', ctx.from.id, ctx.from.username);
+    safeReply(
+        ctx,
+        `💰 Твой баланс: *${balance !== null ? balance : 'ошибка'} 🪙*\n\nВыберите пакет пополнения:`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('🟢 Старт: 150 ₽ (30 монет)', 'pay_150')],
+            [Markup.button.callback('🔵 Стандарт: 500 ₽ (100 монет)', 'pay_500')],
+            [Markup.button.callback('🟣 Люкс: 1000 ₽ (200 монет)', 'pay_1000')],
+            [Markup.button.callback('👑 VIP: 2500 ₽ (500 монет)', 'pay_2500')]
+        ])
+    );
+});
+
+bot.hears('ℹ️ Профиль', async (ctx) => {
+    const userId = ctx.from.id;
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
+    const state = userState[userId] || { model: 'flash_3_8', aspect_ratio: '1:1' };
+    const model = MODELS[state.model];
+    
+    safeReply(
+        ctx,
+        `👤 **Ваш профиль:**\n\n🆔 ID: \`${userId}\`\n💰 Баланс: ${balance} 🪙\n🤖 Активная модель: ${model.name}\n📐 Размер картинок: ${state.aspect_ratio}`
+    );
+});
+
+bot.action(/model_(.+)/, async (ctx) => {
+    const modelKey = ctx.match[1];
+    if (!MODELS[modelKey]) return ctx.answerCbQuery('❌ Модель не найдена');
+    
+    if (!userState[ctx.from.id]) userState[ctx.from.id] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    userState[ctx.from.id].model = modelKey;
+    
+    await ctx.answerCbQuery(`✅ Выбрано: ${MODELS[modelKey].name}`);
+    await ctx.editMessageText(`✅ Вы успешно переключились на модель:\n**${MODELS[modelKey].name}**`, { parse_mode: 'Markdown' });
+});
+
+bot.action(/ratio_(.+)/, async (ctx) => {
+    const ratio = ctx.match[1];
+    if (!['1:1', '16:9', '9:16'].includes(ratio)) return ctx.answerCbQuery('❌ Неверный формат');
+    
+    if (!userState[ctx.from.id]) userState[ctx.from.id] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    userState[ctx.from.id].aspect_ratio = ratio;
+    
+    await ctx.answerCbQuery(`✅ Формат изменен на ${ratio}`);
+    await ctx.editMessageText(`✅ Формат генерации изображений установлен на: **${ratio}**`, { parse_mode: 'Markdown' });
+});
+
+bot.action(/^pay_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const amount = parseInt(ctx.match[1]);
+    const packageInfo = PAYMENT_PACKAGES.find(p => p.priceRub === amount);
+    if (!packageInfo) return ctx.reply('❌ Ошибка: пакет не найден.');
+    await generatePaymentLink(ctx, ctx.from.id, packageInfo.priceRub, packageInfo.coins);
+});
+
+// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ ---
+async function handleAIQuery(ctx, promptText, photoBuffer = null) {
+    const userId = ctx.from.id;
+    const username = ctx.from.username || 'User';
+
+    if (isProcessing.has(userId)) {
+        return ctx.reply('⏳ Пожалуйста, дождитесь окончания предыдущего запроса.');
+    }
+
+    if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
+    const userConfig = userState[userId];
+    const modelData = MODELS[userConfig.model];
+
+    if (promptText && promptText.length > modelData.maxInputChars) {
+        return safeReply(
+            ctx, 
+            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
+        );
+    }
+
+    const balance = await callGoogleSheet('get', userId, username);
+    if (balance === null) return ctx.reply('❌ Ошибка связи с базой данных.');
+
+    if (balance < modelData.cost) {
+        return safeReply(ctx, `❌ Недостаточно монет.\nТребуется: ${modelData.cost} 🪙 | Баланс: ${balance} 🪙`);
+    }
+
+    isProcessing.add(userId);
+
+    try {
+        if (modelData.type === 'text') {
+            await ctx.sendChatAction('typing');
+            let contents = photoBuffer 
+                ? [{ inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }, promptText || 'Опиши это изображение.']
+                : promptText;
+
+            const response = await ai.models.generateContent({
+                model: modelData.modelId,
+                contents: contents,
+                config: {
+                    maxOutputTokens: modelData.maxOutputTokens
+                }
+            });
+
+            const replyText = response.text || 'Не удалось получить ответ.';
+            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
+            await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
+
+        } else if (modelData.type === 'image') {
+            await ctx.sendChatAction('upload_photo');
+            
+            const selectedRatio = userConfig.aspect_ratio || '1:1';
+            let inputPayload = [];
+            
+            const fullPrompt = `${promptText}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
+            inputPayload.push({ type: 'text', text: fullPrompt });
+
+            if (photoBuffer) {
+                inputPayload.push({
+                    type: 'image',
+                    mime_type: 'image/jpeg',
+                    data: photoBuffer.toString('base64')
+                });
+            }
+
+            const interaction = await ai.interactions.create({
+                model: modelData.modelId, 
+                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
+            });
+
+            let imgBuffer = null;
+            if (interaction.outputImage && interaction.outputImage.data) {
+                imgBuffer = Buffer.from(interaction.outputImage.data, 'base64');
+            }
+
+            if (!imgBuffer) {
+                throw new Error('Изображение не было возвращено моделью.');
+            }
+
+            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
+            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
+            
+            await safeReplyWithPhoto(ctx, imgBuffer, caption);
+        }
+
+    } catch (error) {
+        console.error('Ошибка ИИ:', error);
+        ctx.reply('⚠ Произошла ошибка при генерации. Монеты не были списаны.');
+    } finally {
+        isProcessing.delete(userId);
+    }
+}
+
+bot.on('text', async (ctx) => {
+    if (ctx.message.text.startsWith('/') || ['🚀 Выбрать модель', '⚙️ Настройки', '💳 Баланс / Пополнить', 'ℹ️ Профиль'].includes(ctx.message.text)) return;
+    await handleAIQuery(ctx, ctx.message.text, null);
+});
+
+bot.on('photo', async (ctx) => {
+    const photoArray = ctx.message.photo;
+    const photo = photoArray[photoArray.length - 1];
+    const caption = ctx.message.caption || 'Что на фото?';
+    try {
+        const fileLink = await bot.telegram.getFileLink(photo.file_id);
+        const imageResponse = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        await handleAIQuery(ctx, caption, Buffer.from(imageResponse.data));
+    } catch (e) {
+        ctx.reply('❌ Ошибка загрузки фото.');
+    }
+});
+
+// --- ВЕБХУК И ЗАПУСК СЕРВЕРА ---
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+if (RENDER_EXTERNAL_URL) {
+    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+    app.use(bot.webhookCallback(webhookPath));
+    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
+        console.log(`Webhook установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
+    });
+}
+
+app.get('/', (req, res) => res.send('AI Studio Bot Server is running!'));
+
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
