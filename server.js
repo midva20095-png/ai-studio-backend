@@ -1,65 +1,64 @@
+const express = require('express');
+const cors = require('cors');
 const { Telegraf, Markup } = require('telegraf');
-const { GoogleGenAI } = require('@google/genai');
 const axios = require('axios');
+const { GoogleGenAI } = require('@google/genai');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.use(cors());
+app.use(express.json());
+
+// 🔑 КОНФИГУРАЦИЯ И КЛЮЧИ
+const BOT_TOKEN = '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const YUKASSA_SHOP_ID = '1120841';
+const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GOOGLE_SHEET_WEB_APP_URL = process.env.GOOGLE_SHEET_WEB_APP_URL;
 
-if (!BOT_TOKEN) {
-    console.error('❌ Ошибка: Не задан BOT_TOKEN в переменных окружения.');
-    process.exit(1);
-}
-
-if (!GEMINI_API_KEY) {
-    console.error('❌ Ошибка: Не задан GEMINI_API_KEY в переменных окружения.');
-    process.exit(1);
-}
-
-const bot = new Telegraf(BOT_TOKEN);
-
-// 🤖 СПИСОК МОДЕЛЕЙ (С добавленной Gemini 3.1 Flash Image за 3 кредита)
+// 🤖 СПИСОК МОДЕЛЕЙ (Все добавленные сюда модели автоматически создают кнопки в меню)
 const MODELS = {
     'gemini_15_flash': { 
         name: 'Gemini Flash', 
         modelId: 'gemini-3.8-flash', 
-        cost: 1,               
+        cost: 1,               // 1 запрос = 1 кредит (5 руб)
         maxInputChars: 3000,   
         maxOutputTokens: 1200  
     },
     'gemini_15_pro': { 
         name: 'Gemini Pro 3.1', 
         modelId: 'gemini-3.1-pro-preview', 
-        cost: 3,               
+        cost: 3,               // 1 запрос = 3 кредита (15 руб)
         maxInputChars: 8000,   
-        maxOutputTokens: 2048  
-    },
-    'gemini_31_flash_image': { 
-        name: 'Gemini 3.1 Flash Image', 
-        modelId: 'gemini-3.1-flash-image', 
-        cost: 3,               
-        maxInputChars: 5000,   
         maxOutputTokens: 2048  
     }
 };
 
+// Хранение данных
 const userModels = {};
+const processedPayments = new Set(); 
+
+const bot = new Telegraf(BOT_TOKEN);
+
+// Постоянная клавиатура
+const mainReplyKeyboard = Markup.keyboard([
+    ['🤖 Выбор модели', '💳 Личный кабинет']
+]).resize();
 
 function escapeMarkdown(text) {
-    return text;
+    if (!text) return '';
+    return String(text).replace(/[_*`\[\]()]/g, '\\$&');
 }
 
-async function callGoogleSheet(action, userId, username = '') {
-    if (!GOOGLE_SHEET_WEB_APP_URL) {
-        console.warn('⚠️ URL Google Таблицы не задан. Используем режим заглушки (баланс 100 кредитов).');
-        return 100;
-    }
+// 1. ВЗАИМОДЕЙСТВИЕ С GOOGLE ТАБЛИЦЕЙ
+async function callGoogleSheet(action, userId, username = '', amount = 0) {
     try {
-        const response = await axios.post(GOOGLE_SHEET_WEB_APP_URL, {
+        const response = await axios.post(GOOGLE_SCRIPT_URL, {
             action: action,
-            userId: userId,
-            username: username || 'NoUsername',
-            amount: 0
+            userId: String(userId),
+            username: username,
+            amount: amount
         });
         return response.data.balance;
     } catch (error) {
@@ -68,82 +67,190 @@ async function callGoogleSheet(action, userId, username = '') {
     }
 }
 
-function getMainMenu() {
-    return Markup.keyboard([
-        ['🤖 Выбор модели', '💳 Личный кабинет']
-    ]).resize();
+// 2. ИНТЕГРАЦИЯ С ЮKASSA
+async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
+    const url = 'https://api.yookassa.ru/v3/payments';
+    const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
+    
+    const botInfo = await bot.telegram.getMe();
+    const body = {
+        amount: { value: `${amountRub}.00`, currency: 'RUB' },
+        confirmation: { type: 'redirect', return_url: `https://t.me/${botInfo.username}` },
+        capture: true,
+        description: `Покупка ${creditsCount} кр. (${amountRub} руб)`,
+        metadata: { user_id: String(userId), coins: String(creditsCount) }
+    };
+
+    try {
+        const response = await axios.post(url, body, {
+            headers: {
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/json',
+                'Idempotence-Key': Math.random().toString(36).substring(2) + Date.now().toString(36)
+            }
+        });
+
+        const confirmationUrl = response.data.confirmation.confirmation_url;
+
+        return ctx.reply(
+            `💳 *Ссылка на оплату создана!*\n\n` +
+            `💵 Сумма к оплате: *${amountRub} руб.*\n` +
+            `🪙 Кредитов к зачислению: *${creditsCount}*\n\n` +
+            `Перейдите по ссылке ниже для оплаты. После успешного платежа кредиты зачислятся автоматически!`,
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, confirmationUrl)]
+                ])
+            }
+        );
+
+    } catch (error) {
+        console.error('Ошибка ЮKassa:', error.response?.data || error.message);
+        return ctx.reply('❌ Ошибка создания платежа в ЮKassa. Попробуйте позже.');
+    }
 }
 
+// WEBHOOK ЮKASSA
+app.post('/yookassa-webhook', async (req, res) => {
+    try {
+        const event = req.body.event;
+        const paymentInfo = req.body.object;
+
+        if (event === 'payment.succeeded' && paymentInfo) {
+            const paymentId = paymentInfo.id;
+
+            if (!processedPayments.has(paymentId)) {
+                processedPayments.add(paymentId);
+
+                const userId = paymentInfo.metadata?.user_id;
+                const credits = parseInt(paymentInfo.metadata?.coins) || 1;
+                const amountPaid = paymentInfo.amount?.value || '';
+
+                if (userId) {
+                    const newBalance = await callGoogleSheet('update', userId, '', credits);
+                    
+                    await bot.telegram.sendMessage(
+                        userId,
+                        `✅ *Оплата прошла успешно!*\n\n` +
+                        `💵 Сумма: *${amountPaid} руб.*\n` +
+                        `🪙 Зачислено: *${credits}* кредитов\n` +
+                        `💰 Ваш новый баланс: *${newBalance}* кредитов`,
+                        { parse_mode: 'Markdown' }
+                    );
+                }
+            }
+        }
+        res.status(200).send('OK');
+    } catch (error) {
+        console.error('Ошибка обработки Webhook ЮKassa:', error);
+        res.status(500).send('Error');
+    }
+});
+
+// 3. КОМАНДЫ И НАВИГАЦИЯ БОТА
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
-    const username = ctx.from.username || '';
+    const username = ctx.from.username || ctx.from.first_name || 'User';
+    const safeUsername = escapeMarkdown(username);
     
-    await callGoogleSheet('get', userId, username);
-    userModels[userId] = Object.keys(MODELS)[0];
+    const balance = await callGoogleSheet('get', userId, username);
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+    const activeModel = MODELS[activeModelKey] || MODELS['gemini_15_flash'];
 
-    await ctx.reply(
-        `Привет, ${ctx.from.first_name}! 👋\n\n` +
-        `Я твой умный помощник на базе искусственного интеллекта. Выбирай модель, отправляй текст или картинки и получай ответы!\n\n` +
-        `Используй кнопки ниже для навигации 👇`,
-        getMainMenu()
+    ctx.reply(
+        `👋 Привет, ${safeUsername}!\n\n` +
+        `🆔 Твой ID: \`${userId}\`\n` +
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
+        `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*\n\n` +
+        `Используй меню ниже для управления ботом:`,
+        {
+            parse_mode: 'Markdown',
+            ...mainReplyKeyboard
+        }
     );
 });
 
+// 🤖 АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ КНОПОК ВЫБОРА МОДЕЛЕЙ
+bot.hears('🤖 Выбор модели', async (ctx) => {
+    const userId = ctx.from.id;
+    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
+
+    // Динамически создаем кнопки на основе всех ключей в MODELS
+    const buttons = Object.keys(MODELS).map((key) => {
+        const model = MODELS[key];
+        const isSelected = key === activeModelKey ? '✅ ' : '';
+        return [
+            Markup.button.callback(
+                `${isSelected}${model.name} (${model.cost} кр.)`,
+                `set_model_${key}`
+            )
+        ];
+    });
+
+    const activeModelName = MODELS[activeModelKey]?.name || 'Не выбрана';
+
+    ctx.reply(
+        `🤖 *Выберите языковую модель:*\n\n` +
+        `Текущая модель: *${escapeMarkdown(activeModelName)}*`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard(buttons)
+        }
+    );
+});
+
+// 🔄 УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ПЕРЕКЛЮЧЕНИЯ МОДЕЛЕЙ
+bot.action(/^set_model_(.+)$/, async (ctx) => {
+    const modelKey = ctx.match[1];
+
+    if (MODELS[modelKey]) {
+        userModels[ctx.from.id] = modelKey;
+        const selectedModel = MODELS[modelKey];
+
+        await ctx.answerCbQuery(`Выбрана модель: ${selectedModel.name}`);
+        ctx.reply(
+            `✅ Активна модель: *${escapeMarkdown(selectedModel.name)}* (${selectedModel.cost} кр. / запрос)`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        await ctx.answerCbQuery('❌ Модель не найдена');
+    }
+});
+
+// МЕНЮ ОПЛАТЫ
 bot.hears('💳 Личный кабинет', async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
-    
-    if (balance === null) {
-        return ctx.reply('❌ Не удалось получить данные о балансе. Попробуйте позже.');
-    }
 
-    const activeModelKey = userModels[userId] || Object.keys(MODELS)[0];
-    const activeModel = MODELS[activeModelKey];
-
-    await ctx.reply(
-        `👤 *Личный кабинет*\n\n` +
-        `🆔 ID: \`${userId}\`\n` +
-        `💰 Баланс: *${balance} кредитов* (~${balance * 5} руб)\n` +
-        `🤖 Активная модель: *${activeModel.name}* (${activeModel.cost} кр. / запрос)`,
-        { parse_mode: 'Markdown', ...getMainMenu() }
+    ctx.reply(
+        `💳 *Личный кабинет / Пополнение*\n\n` +
+        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
+        `📊 Курс: *1 кредит = 5 руб.*\n\n` +
+        `Выберите пакет кредитов для покупки:`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🧪 1 руб. (1 кредит - ТЕСТ)', 'pay_1')],
+                [Markup.button.callback('📦 Старт: 100 ₽ (20 кр.)', 'pay_100')],
+                [Markup.button.callback('📦 Стандарт: 500 ₽ (100 кр.)', 'pay_500')],
+                [Markup.button.callback('📦 Комфорт: 1 000 ₽ (200 кр.)', 'pay_1000')],
+                [Markup.button.callback('📦 Топ: 2 500 ₽ (500 кр.)', 'pay_2500')],
+                [Markup.button.callback('🚀 Максимум: 5 000 ₽ (1 000 кр.)', 'pay_5000')]
+            ])
+        }
     );
 });
 
-bot.hears('🤖 Выбор модели', async (ctx) => {
-    const userId = ctx.from.id;
-    const currentModel = userModels[userId] || Object.keys(MODELS)[0];
+// Кнопки оплаты ЮKassa
+bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
+bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
+bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
+bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
+bot.action('pay_2500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 2500, 500); });
+bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
-    const buttons = Object.keys(MODELS).map(key => {
-        const model = MODELS[key];
-        const isSelected = key === currentModel;
-        const prefix = isSelected ? '✅ ' : '▫️ ';
-        return [Markup.button.callback(`${prefix}${model.name} (${model.cost} кр.)`, `set_model_${key}`)];
-    });
-
-    await ctx.reply('🤖 *Выберите модель искусственного интеллекта:*', {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(buttons)
-    });
-});
-
-bot.action(/^set_model_(.+)$/, async (ctx) => {
-    const modelKey = ctx.match[1];
-    if (!MODELS[modelKey]) {
-        return ctx.answerCbQuery('❌ Модель не найдена.');
-    }
-
-    const userId = ctx.from.id;
-    userModels[userId] = modelKey;
-    const selected = MODELS[modelKey];
-
-    await ctx.answerCbQuery(`Выбрана модель: ${selected.name}`);
-    await ctx.editMessageText(
-        `✅ Успешно переключено!\n\n🤖 Текущая модель: *${selected.name}*\n💳 Стоимость запроса: *${selected.cost} кредитов*`,
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// Обработка фотографий
+// 4. ОБРАБОТКА ИЗОБРАЖЕНИЙ
 bot.on('photo', async (ctx) => {
     const userId = ctx.from.id;
     const caption = (ctx.message.caption || '').trim();
@@ -161,7 +268,8 @@ bot.on('photo', async (ctx) => {
             `❌ *Недостаточно кредитов!*\n\n` +
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
             `📉 Требуется: ${selectedModel.cost} кр. (${selectedModel.cost * 5} руб)\n` +
-            `💰 Ваш баланс: ${balance} кредитов`,
+            `💰 Ваш баланс: ${balance} кредитов\n\n` +
+            `Пополните баланс в меню «💳 Личный кабинет».`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -197,30 +305,12 @@ bot.on('photo', async (ctx) => {
             }
         });
 
+        const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
-        const captionStats = `\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`;
 
-        const candidates = response.candidates || [];
-        let imageSent = false;
-
-        for (const candidate of candidates) {
-            const parts = candidate.content?.parts || [];
-            for (const part of parts) {
-                if (part.inlineData) {
-                    const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
-                    await ctx.replyWithPhoto({ source: imgBuffer }, {
-                        caption: (part.text || '🎨 Обработанное изображение') + captionStats,
-                        parse_mode: 'Markdown'
-                    });
-                    imageSent = true;
-                }
-            }
-        }
-
-        if (!imageSent) {
-            const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-            await ctx.reply(`${aiReply}${captionStats}`, { parse_mode: 'Markdown' });
-        }
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`, {
+            parse_mode: 'Markdown'
+        });
 
     } catch (error) {
         console.error('Ошибка обработки изображения Gemini AI:', error);
@@ -228,7 +318,7 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// Обработка текста
+// 5. ОБРАБОТКА ТЕКСТА
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -242,7 +332,8 @@ bot.on('text', async (ctx) => {
         return ctx.reply(
             `⚠️ *Запрос слишком длинный!*\n\n` +
             `Максимальный размер промпта для ${escapeMarkdown(selectedModel.name)}: *${selectedModel.maxInputChars}* символов.\n` +
-            `Длина вашего сообщения: *${text.length}* символов.`,
+            `Длина вашего сообщения: *${text.length}* символов.\n\n` +
+            `Пожалуйста, сократите текст сообщения, чтобы не тратить кредиты зря.`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -257,7 +348,8 @@ bot.on('text', async (ctx) => {
             `❌ *Недостаточно кредитов!*\n\n` +
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
             `📉 Требуется: ${selectedModel.cost} кр. (${selectedModel.cost * 5} руб)\n` +
-            `💰 Ваш баланс: ${balance} кредитов`,
+            `💰 Ваш баланс: ${balance} кредитов\n\n` +
+            `Пополните баланс в меню «💳 Личный кабинет».`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -274,41 +366,38 @@ bot.on('text', async (ctx) => {
             }
         });
 
+        const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
-        const captionStats = `\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`;
 
-        const candidates = response.candidates || [];
-        let imageSent = false;
-
-        for (const candidate of candidates) {
-            const parts = candidate.content?.parts || [];
-            for (const part of parts) {
-                if (part.inlineData) {
-                    const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
-                    await ctx.replyWithPhoto({ source: imgBuffer }, {
-                        caption: (part.text || '🎨 Сгенерированное изображение') + captionStats,
-                        parse_mode: 'Markdown'
-                    });
-                    imageSent = true;
-                }
-            }
-        }
-
-        if (!imageSent) {
-            const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-            await ctx.reply(`${aiReply}${captionStats}`, { parse_mode: 'Markdown' });
-        }
-
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`, {
+            parse_mode: 'Markdown'
+        });
     } catch (error) {
         console.error('Ошибка обращения к Gemini AI:', error);
         ctx.reply('Произошла ошибка при обращении к нейросети. Попробуй позже.');
     }
 });
 
-bot.launch().then(() => {
-    console.log('🚀 Сервер запущен на порту ' + (process.env.PORT || 10000));
-}).catch((err) => {
-    console.error('❌ Ошибка запуска бота:', err);
+// 6. ЗАПУСК СЕРВЕРА
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+
+if (RENDER_EXTERNAL_URL) {
+    const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
+    app.use(bot.webhookCallback(webhookPath));
+    bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
+        console.log(`🌐 Webhook установлен: ${RENDER_EXTERNAL_URL}${webhookPath}`);
+    });
+} else {
+    console.log('⚠️ Переменная RENDER_EXTERNAL_URL не задана. Запуск в режиме Polling...');
+    bot.launch();
+}
+
+app.get('/', (req, res) => {
+    res.send('Server is running with Google Sheets database!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
