@@ -22,9 +22,16 @@ const MODELS = {
     'gemini_38_flash': { 
         name: 'Gemini 3.8 Flash', 
         modelId: 'gemini-3.8-flash', 
-        cost: 1,               // 1 запрос = 1 кредит
+        cost: 1,               // 1 запрос = 1 кредит (5 руб)
         maxInputChars: 3000,   // Лимит входных символов
         maxOutputTokens: 1200  // Лимит выходных токенов
+    },
+    'gemini_31_pro': { 
+        name: 'Gemini 3.1 Pro', 
+        modelId: 'gemini-3.1-pro', 
+        cost: 3,               // 1 запрос = 3 кредита (15 руб)
+        maxInputChars: 8000,   // Увеличенный лимит символов для Pro
+        maxOutputTokens: 2048  // Увеличенный лимит ответа
     }
 };
 
@@ -175,7 +182,8 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит)', 'set_model_gemini_38_flash')]
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит)', 'set_model_gemini_38_flash')],
+                [Markup.button.callback('🧠 Gemini 3.1 Pro (3 кредита)', 'set_model_gemini_31_pro')]
             ])
         }
     );
@@ -188,7 +196,7 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
     ctx.reply(
         `💳 *Личный кабинет / Пополнение*\n\n` +
         `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
-        `📊 Курс: *1 кредит = 5 руб.* (1 запрос = 1 кредит)\n\n` +
+        `📊 Курс: *1 кредит = 5 руб.*\n\n` +
         `Выберите пакет кредитов для покупки:`,
         {
             parse_mode: 'Markdown',
@@ -204,11 +212,19 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
     );
 });
 
+// Переключение моделей
 bot.action('set_model_gemini_38_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'gemini_38_flash';
     await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Активна модель: *Gemini 3.8 Flash*', { parse_mode: 'Markdown' });
+    ctx.reply('✅ Активна модель: *Gemini 3.8 Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
+});
+
+bot.action('set_model_gemini_31_pro', async (ctx) => {
+    const userId = ctx.from.id;
+    userModels[userId] = 'gemini_31_pro';
+    await ctx.answerCbQuery('Выбрана модель Gemini 3.1 Pro');
+    ctx.reply('✅ Активна модель: *Gemini 3.1 Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
 });
 
 // Обработчики кнопок оплаты
@@ -237,7 +253,7 @@ bot.on('photo', async (ctx) => {
         return ctx.reply(
             `❌ *Недостаточно кредитов!*\n\n` +
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
-            `📉 Требуется: ${selectedModel.cost} кредит (5 руб)\n` +
+            `📉 Требуется: ${selectedModel.cost} кр. (${selectedModel.cost * 5} руб)\n` +
             `💰 Ваш баланс: ${balance} кредитов\n\n` +
             `Пополните баланс в меню «💳 Личный кабинет».`,
             { parse_mode: 'Markdown' }
@@ -247,12 +263,10 @@ bot.on('photo', async (ctx) => {
     try {
         await ctx.sendChatAction('typing');
 
-        // Получаем ссылку на самый крупный вариант изображения
         const photoArray = ctx.message.photo;
         const fileId = photoArray[photoArray.length - 1].file_id;
         const fileLink = await ctx.telegram.getFileLink(fileId);
 
-        // Скачиваем фото в буфер
         const imgResponse = await axios.get(fileLink.href || fileLink.toString(), { responseType: 'arraybuffer' });
         const base64Image = Buffer.from(imgResponse.data).toString('base64');
 
@@ -305,7 +319,7 @@ bot.on('text', async (ctx) => {
     if (text.length > selectedModel.maxInputChars) {
         return ctx.reply(
             `⚠️ *Запрос слишком длинный!*\n\n` +
-            `Максимальный размер промпта: *${selectedModel.maxInputChars}* символов.\n` +
+            `Максимальный размер промпта для ${escapeMarkdown(selectedModel.name)}: *${selectedModel.maxInputChars}* символов.\n` +
             `Длина вашего сообщения: *${text.length}* символов.\n\n` +
             `Пожалуйста, сократите текст сообщения, чтобы не тратить кредиты зря.`,
             { parse_mode: 'Markdown' }
@@ -322,7 +336,7 @@ bot.on('text', async (ctx) => {
         return ctx.reply(
             `❌ *Недостаточно кредитов!*\n\n` +
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
-            `📉 Требуется: ${selectedModel.cost} кредит (5 руб)\n` +
+            `📉 Требуется: ${selectedModel.cost} кр. (${selectedModel.cost * 5} руб)\n` +
             `💰 Ваш баланс: ${balance} кредитов\n\n` +
             `Пополните баланс в меню «💳 Личный кабинет».`,
             { parse_mode: 'Markdown' }
