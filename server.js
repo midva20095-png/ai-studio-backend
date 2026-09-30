@@ -10,11 +10,11 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// --- ИНИЦИАЛИЗАЦИЯ КЛЮЧЕЙ СЕРВЕРА ---
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID;
-const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY;
-const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
+// --- КОНФИГУРАЦИЯ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ С FALLBACK ---
+const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
+const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
+const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
@@ -22,24 +22,24 @@ const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
 // =========================================================================
-// 🎯 ТАРИФНАЯ СЕТКА, ЛИМИТЫ И НАСТРОЙКИ МОДЕЛЕЙ
-// Изменяйте 'cost', 'maxChars' и 'maxOutputTokens' здесь — кнопки обновятся автоматически.
+// 🎯 ТАРИФНАЯ СЕТКА И НАСТРОЙКИ МОДЕЛЕЙ
+// Изменяйте стоимость, лимиты ввода и вывода здесь
 // =========================================================================
 const MODELS = {
-    'flash': {
-        name: '⚡ Flash (Gemini 2.0)',
-        modelId: 'gemini-2.0-flash',
+    'flash_2_5': {
+        name: '⚡ Flash 3.8',
+        modelId: 'gemini-3.8-flash',
         type: 'text',
-        cost: 1,             // Стоимость в монетах
-        maxChars: 4000,      // Лимит символов на вход (от пользователя)
-        maxOutputTokens: 2048 // Максимальная длина ответа
+        cost: 1,                 // Стоимость в монетах
+        maxInputChars: 4000,     // Максимум символов от пользователя
+        maxOutputTokens: 2048    // Ограничение длины ответа
     },
-    'pro': {
-        name: '🧠 Pro (Gemini 1.5)',
-        modelId: 'gemini-1.5-pro',
+    'pro_2_5': {
+        name: '🧠 Pro 3.1',
+        modelId: 'gemini-3.1-pro-preview',
         type: 'text',
         cost: 3,
-        maxChars: 12000,
+        maxInputChars: 20000,
         maxOutputTokens: 4096
     },
     'nano_banana_2_lite': {
@@ -47,24 +47,24 @@ const MODELS = {
         modelId: 'imagen-3.0-fast-generate-001',
         type: 'image',
         cost: 1,
-        maxChars: 800,
-        qualityPrompt: 'fast generation, high quality'
+        maxInputChars: 800,
+        qualityPrompt: 'clear, fast generation, detailed'
     },
     'nano_banana_2': {
         name: '🎨 Nano Banana 2',
         modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 2,
-        maxChars: 800,
-        qualityPrompt: 'high quality, detailed, professional photo'
+        maxInputChars: 800,
+        qualityPrompt: 'high quality, detailed, clear focus, professional photography'
     },
     'nano_banana_pro': {
         name: '✨ Nano Banana Pro',
         modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 4,
-        maxChars: 800,
-        qualityPrompt: 'ultra-hd quality, highly detailed, photorealistic, 4k'
+        maxInputChars: 800,
+        qualityPrompt: 'ultra-hd quality, highly detailed, 4k resolution, masterpiece, photorealistic'
     }
 };
 
@@ -78,7 +78,7 @@ const PAYMENT_PACKAGES = [
 
 const MENU_BUTTONS = {
     SELECT_MODEL: '🚀 Выбрать модель',
-    SETTINGS: '⚙️ Настройки',
+    SETTINGS: '⚙️️ Настройки',
     BALANCE: '💳 Баланс / Пополнить',
     PROFILE: 'ℹ️ Профиль'
 };
@@ -86,13 +86,20 @@ const MENU_BUTTONS = {
 const userState = {};
 const isProcessing = new Set();
 
+// Вспомогательная функция состояния пользователя (с гарантией валидности ключа)
 function getUserState(userId) {
     if (!userState[userId]) {
-        userState[userId] = { model: 'flash', aspect_ratio: '1:1' };
+        userState[userId] = { model: 'flash_2_5', aspect_ratio: '1:1' };
     }
+    // Защита от старых/несуществующих ключей моделей
+    if (userState[userId].model === 'flash') userState[userId].model = 'flash_2_5';
+    if (userState[userId].model === 'pro') userState[userId].model = 'pro_2_5';
+    if (!MODELS[userState[userId].model]) userState[userId].model = 'flash_2_5';
+
     return userState[userId];
 }
 
+// Безопасная отправка сообщений (защита от ошибок Markdown)
 async function safeReply(ctx, text, extra = {}) {
     try {
         return await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
@@ -130,25 +137,28 @@ bot.start((ctx) => {
     safeReply(ctx, `👋 **Добро пожаловать в AI Studio!**\n\nВыберите модель из меню ниже и отправьте ваш запрос.`, mainMenuKeyboard);
 });
 
-// ДИНАМИЧЕСКИЙ ВЫВОД КНОПОК МОДЕЛЕЙ (с ценами и лимитами)
+// Вывод кнопок выбора моделей (с ценой и лимитом символов)
 bot.hears(MENU_BUTTONS.SELECT_MODEL, (ctx) => {
     const buttons = Object.keys(MODELS).map((key) => {
         const m = MODELS[key];
-        return [Markup.button.callback(`${m.name} — ${m.cost} 🪙 (до ${m.maxChars} симв.)`, `set_model_${key}`)];
+        const limitInfo = m.type === 'text' 
+            ? `до ${m.maxInputChars} симв.` 
+            : `промпт до ${m.maxInputChars} симв.`;
+        return [Markup.button.callback(`${m.name} — ${m.cost} 🪙 (${limitInfo})`, `model_${key}`)];
     });
 
-    safeReply(ctx, '🤖 **Выберите нейросеть для работы:**\n\nЦена и максимальный лимит указаны на кнопках:', Markup.inlineKeyboard(buttons));
+    safeReply(ctx, '🤖 **Выберите нейросеть для работы:**\n\nСтоимость и лимиты указаны на кнопках:', Markup.inlineKeyboard(buttons));
 });
 
 bot.hears(MENU_BUTTONS.SETTINGS, (ctx) => {
     const state = getUserState(ctx.from.id);
     const r = state.aspect_ratio;
-    safeReply(ctx, `⚙️ **Настройки пропорций генерации картинок:**\nТекущие пропорции: **${r}**`, Markup.inlineKeyboard([
-        [Markup.button.callback(`1:1 (Квадрат) ${r === '1:1' ? '✅' : ''}`, 'set_ratio_1:1')],
-        [Markup.button.callback(`16:9 (Широкий) ${r === '16:9' ? '✅' : ''}`, 'set_ratio_16:9')],
-        [Markup.button.callback(`9:16 (Вертикальный) ${r === '9:16' ? '✅' : ''}`, 'set_ratio_9:16')],
-        [Markup.button.callback(`4:3 (Альбом) ${r === '4:3' ? '✅' : ''}`, 'set_ratio_4:3')],
-        [Markup.button.callback(`3:4 (Портрет) ${r === '3:4' ? '✅' : ''}`, 'set_ratio_3:4')]
+    safeReply(ctx, `⚙️️ **Настройки пропорций генерации картинок:**\nТекущий формат: **${r}**`, Markup.inlineKeyboard([
+        [Markup.button.callback(`1:1 (Квадрат) ${r === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
+        [Markup.button.callback(`16:9 (Широкий) ${r === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
+        [Markup.button.callback(`9:16 (Вертикальный) ${r === '9:16' ? '✅' : ''}`, 'ratio_9:16')],
+        [Markup.button.callback(`4:3 (Альбом) ${r === '4:3' ? '✅' : ''}`, 'ratio_4:3')],
+        [Markup.button.callback(`3:4 (Портрет) ${r === '3:4' ? '✅' : ''}`, 'ratio_3:4')]
     ]));
 });
 
@@ -166,7 +176,7 @@ bot.hears(MENU_BUTTONS.PROFILE, async (ctx) => {
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     const state = getUserState(userId);
-    const m = MODELS[state.model] || MODELS['flash'];
+    const m = MODELS[state.model] || MODELS['flash_2_5'];
 
     safeReply(ctx, 
         `👤 **Профиль пользователя**\n\n` +
@@ -174,32 +184,36 @@ bot.hears(MENU_BUTTONS.PROFILE, async (ctx) => {
         `💰 Баланс: **${balance !== null ? balance : 'Ошибка'} 🪙**\n` +
         `🤖 Активная модель: **${m.name}**\n` +
         `💵 Стоимость запроса: **${m.cost} 🪙**\n` +
-        `📏 Лимит входа: **до ${m.maxChars} символов**\n` +
+        `📏 Лимит входящего текста: **до ${m.maxInputChars} символов**\n` +
+        (m.type === 'text' ? `📤 Лимит ответа: **до ${m.maxOutputTokens} токенов**\n` : '') +
         `📐 Формат картинок: **${state.aspect_ratio}**`
     );
 });
 
-// --- CALLBACK ОБРАБОТЧИКИ ---
-bot.action(/^set_model_(.+)$/, async (ctx) => {
+// --- CALLBACK ОБРАБОТЧИКИ (Поддерживают как model_, так и set_model_) ---
+bot.action(/^(?:model_|set_model_)(.+)$/, async (ctx) => {
     const key = ctx.match[1];
-    if (!MODELS[key]) return ctx.answerCbQuery('Модель не найдена');
+    if (!MODELS[key]) return ctx.answerCbQuery('❌ Модель не найдена');
 
     const state = getUserState(ctx.from.id);
     state.model = key;
-    await ctx.answerCbQuery();
+    const m = MODELS[key];
+
+    await ctx.answerCbQuery(`Выбрано: ${m.name}`);
     await ctx.editMessageText(
-        `✅ Активная модель: **${MODELS[key].name}**\n\n` +
-        `💰 Стоимость: **${MODELS[key].cost} 🪙**\n` +
-        `📏 Лимит длины запроса: **${MODELS[key].maxChars} символов**`, 
+        `✅ Активная модель: **${m.name}**\n\n` +
+        `💰 Стоимость: **${m.cost} 🪙**\n` +
+        `📏 Лимит длины запроса: **${m.maxInputChars} символов**` +
+        (m.type === 'text' ? `\n📤 Макс. длина ответа: **${m.maxOutputTokens} токенов**` : ''), 
         { parse_mode: 'Markdown' }
     );
 });
 
-bot.action(/^set_ratio_(.+)$/, async (ctx) => {
+bot.action(/^(?:ratio_|set_ratio_)(.+)$/, async (ctx) => {
     const ratio = ctx.match[1];
     const state = getUserState(ctx.from.id);
     state.aspect_ratio = ratio;
-    await ctx.answerCbQuery();
+    await ctx.answerCbQuery(`Формат: ${ratio}`);
     await ctx.editMessageText(`✅ Выбран формат картинок: **${ratio}**`, { parse_mode: 'Markdown' });
 });
 
@@ -270,36 +284,36 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     }
 
     const state = getUserState(userId);
-    const model = MODELS[state.model] || MODELS['flash'];
+    const modelData = MODELS[state.model] || MODELS['flash_2_5'];
 
     // 1. ПРОВЕРКА ДЛИНЫ ПРОМПТА ДО ВЫЗОВА API
-    if (promptText && promptText.length > model.maxChars) {
+    if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(
             ctx,
             `⛔ **Превышен лимит длины запроса!**\n\n` +
-            `Модель: **${model.name}**\n` +
-            `Допустимо: **${model.maxChars}** символов\n` +
+            `Модель: **${modelData.name}**\n` +
+            `Максимум на вход: **${modelData.maxInputChars}** символов\n` +
             `Ваш запрос: **${promptText.length}** символов\n\n` +
             `Пожалуйста, сократите текст.`
         );
     }
 
-    // 2. ПРОВЕРКА СОВМЕСТИМОСТИ ФОТО
-    if (photoBuffer && model.type === 'image') {
-        return safeReply(ctx, `⚠️ Генераторы картинок не принимают фото на вход. Для анализа картинок переключитесь на текстовую модель (Flash или Pro).`);
+    // 2. ПРОВЕРКА СОВМЕСТИМОСТИ ФОТО И МОДЕЛИ
+    if (photoBuffer && modelData.type === 'image') {
+        return safeReply(ctx, `⚠️ **Внимание:** Генераторы картинок не принимают фото на вход. Переключитесь на текстовую модель (Flash или Pro) для анализа фото.`);
     }
 
     // 3. ПРОВЕРКА БАЛАНСА
     const balance = await callGoogleSheet('get', userId, username);
     if (balance === null) return ctx.reply('❌ Ошибка связи с базой данных.');
-    if (balance < model.cost) {
-        return safeReply(ctx, `❌ **Недостаточно монет.**\nСтоимость запроса: ${model.cost} 🪙\nВаш баланс: ${balance} 🪙`);
+    if (balance < modelData.cost) {
+        return safeReply(ctx, `❌ **Недостаточно монет.**\nСтоимость запроса: ${modelData.cost} 🪙\nВаш баланс: ${balance} 🪙`);
     }
 
     isProcessing.add(userId);
 
     try {
-        if (model.type === 'text') {
+        if (modelData.type === 'text') {
             await ctx.sendChatAction('typing');
 
             let contents;
@@ -312,26 +326,33 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
                 contents = promptText;
             }
 
+            const config = {};
+            if (modelData.maxOutputTokens) {
+                config.maxOutputTokens = modelData.maxOutputTokens;
+            }
+            if (modelData.modelId === 'gemini-3.8-flash') {
+                config.thinkingConfig = { thinkingLevel: 'medium' };
+            }
+
             const response = await ai.models.generateContent({
-                model: model.modelId,
+                model: modelData.modelId,
                 contents: contents,
-                config: {
-                    maxOutputTokens: model.maxOutputTokens
-                }
+                config: config
             });
 
             const replyText = response.text || 'Получен пустой ответ.';
-            const newBalance = await callGoogleSheet('update', userId, username, -model.cost);
+            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
+            const balanceStr = newBalance !== null ? newBalance : (balance - modelData.cost);
 
-            await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${model.cost} 🪙 | Баланс: ${newBalance ?? (balance - model.cost)} 🪙_`);
+            await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${balanceStr} 🪙_`);
 
-        } else if (model.type === 'image') {
+        } else if (modelData.type === 'image') {
             await ctx.sendChatAction('upload_photo');
 
-            const fullPrompt = promptText ? `${promptText}. ${model.qualityPrompt}` : model.qualityPrompt;
+            const fullPrompt = promptText ? `${promptText}. ${modelData.qualityPrompt}` : modelData.qualityPrompt;
 
             const response = await ai.models.generateImages({
-                model: model.modelId,
+                model: modelData.modelId,
                 prompt: fullPrompt,
                 config: {
                     numberOfImages: 1,
@@ -344,19 +365,20 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             if (!base64Bytes) throw new Error('API не вернуло данные изображения.');
 
             const imgBuffer = Buffer.from(base64Bytes, 'base64');
-            const newBalance = await callGoogleSheet('update', userId, username, -model.cost);
+            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
+            const balanceStr = newBalance !== null ? newBalance : (balance - modelData.cost);
 
             await ctx.replyWithPhoto(
                 { source: imgBuffer },
                 {
-                    caption: `🖼 **Готово!** (${model.name})\n\n📉 _Списано: ${model.cost} 🪙 | Баланс: ${newBalance ?? (balance - model.cost)} 🪙_`,
+                    caption: `🖼 **Готово!** (${modelData.name})\n📐 Формат: ${state.aspect_ratio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Баланс: ${balanceStr} 🪙_`,
                     parse_mode: 'Markdown'
                 }
             );
         }
     } catch (err) {
         console.error('Ошибка API Google:', err.message);
-        await ctx.reply(`⚠️ Ошибка генерации: ${err.message}\nМонеты списаны не были.`);
+        await ctx.reply(`⚠️ Ошибка генерации: ${err.message || 'Сбой сервиса Google API'}.\nМонеты списаны не были.`);
     } finally {
         isProcessing.delete(userId);
     }
@@ -390,14 +412,14 @@ if (RENDER_EXTERNAL_URL) {
     const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
     app.use(bot.webhookCallback(webhookPath));
     bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
-        console.log(`Webhook запущен: ${RENDER_EXTERNAL_URL}${webhookPath}`);
+        console.log(`Webhook успешно запущен: ${RENDER_EXTERNAL_URL}${webhookPath}`);
     });
 } else {
     bot.launch();
     console.log("Бот запущен локально (Long Polling)");
 }
 
-app.get('/', (req, res) => res.send('AI Studio Backend: Running'));
+app.get('/', (req, res) => res.send('AI Studio Backend Status: OK'));
 app.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
