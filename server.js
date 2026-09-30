@@ -20,11 +20,11 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- МОДЕЛИ ИИ (обновлены под актуальные ID 3.x) ---
+// --- МОДЕЛИ ИИ ---
 const MODELS = {
     'flash_3_8': {
         name: 'Flash 3.8',
-        modelId: 'gemini-3.8-flash',
+        modelId: 'gemini-2.5-flash',
         type: 'text',
         cost: 1,
         maxInputChars: 4000,
@@ -34,7 +34,7 @@ const MODELS = {
     },
     'flash_lite': {
         name: 'Flash-Lite',
-        modelId: 'gemini-3.8-flash',
+        modelId: 'gemini-2.5-flash',
         type: 'text',
         cost: 1,
         maxInputChars: 4000,
@@ -44,7 +44,7 @@ const MODELS = {
     },
     'pro_3_1': {
         name: 'Pro 3.1',
-        modelId: 'gemini-3.1-pro', // Исправлено с 2.5 на актуальную
+        modelId: 'gemini-2.5-pro',
         type: 'text',
         cost: 3,
         maxInputChars: 20000,
@@ -54,7 +54,7 @@ const MODELS = {
     },
     'deep_research': {
         name: 'Deep Research',
-        modelId: 'gemini-3.1-pro', // Исправлено с 2.5 на актуальную
+        modelId: 'gemini-2.5-pro',
         type: 'text',
         cost: 3,
         maxInputChars: 20000,
@@ -64,33 +64,30 @@ const MODELS = {
     },
     'nano_banana_2': {
         name: 'Nano Banana 2',
-        modelId: 'gemini-3.1-flash-image',
+        modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 2,
         maxInputChars: 800,
-        quality: 'HD',
         qualityPrompt: 'HD quality, clear details, high resolution',
         buttonLabel: '🖼 Nano Banana 2 · 2 🪙',
         description: 'HD · описание до 800 символов · 10 ₽'
     },
     'nano_banana_pro': {
         name: 'Nano Banana Pro',
-        modelId: 'gemini-3.1-flash-image',
+        modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 4,
         maxInputChars: 800,
-        quality: 'Ultra-HD',
         qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details',
         buttonLabel: '✨ Nano Banana Pro · 4 🪙',
         description: 'Ultra-HD · описание до 800 символов · 20 ₽'
     },
     'nano_banana_4k': {
         name: 'Nano Banana 4K',
-        modelId: 'gemini-3.1-flash-image',
+        modelId: 'imagen-3.0-generate-002',
         type: 'image',
         cost: 10,
         maxInputChars: 800,
-        quality: 'Премиум 4K фотореализм',
         qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography',
         buttonLabel: '💎 Nano Banana 4K · 10 🪙',
         description: 'Премиум 4K фотореализм · описание до 800 символов · 50 ₽'
@@ -229,7 +226,7 @@ bot.hears('⚙️ Настройки', (ctx) => {
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const currentRatio = userState[userId].aspect_ratio;
     
-    safeReply(ctx, `⚙️️ **Настройки генерации изображений:**\n\nТекущее соотношение сторон: **${currentRatio}**\nВыберите нужный размер:`, Markup.inlineKeyboard([
+    safeReply(ctx, `⚙️ **Настройки генерации изображений:**\n\nТекущее соотношение сторон: **${currentRatio}**\nВыберите нужный размер:`, Markup.inlineKeyboard([
         [Markup.button.callback(`Квадрат (1:1) ${currentRatio === '1:1' ? '✅' : ''}`, 'ratio_1:1')],
         [Markup.button.callback(`Горизонтально (16:9) ${currentRatio === '16:9' ? '✅' : ''}`, 'ratio_16:9')],
         [Markup.button.callback(`Вертикально (9:16) ${currentRatio === '9:16' ? '✅' : ''}`, 'ratio_9:16')]
@@ -296,7 +293,7 @@ bot.action(/^pay_(start|standard|lux|vip|150|500|1000|2500)$/, async (ctx) => {
     await generatePaymentLink(ctx, ctx.from.id, packageInfo.priceRub, packageInfo.coins);
 });
 
-// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ (Только Interactions API) ---
+// --- ОБРАБОТКА ИИ ЗАПРОСОВ ЧЕРЕЗ @google/genai SDK ---
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -312,7 +309,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     if (promptText && promptText.length > modelData.maxInputChars) {
         return safeReply(
             ctx, 
-            `⛔️️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
+            `⛔ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
         );
     }
 
@@ -329,23 +326,23 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         if (modelData.type === 'text') {
             await ctx.sendChatAction('typing');
             
-            let inputPayload = [];
+            let contents = [];
             if (photoBuffer) {
-                inputPayload.push({
-                    type: 'image',
-                    mime_type: 'image/jpeg',
-                    data: photoBuffer.toString('base64')
+                contents.push({
+                    inlineData: {
+                        mimeType: 'image/jpeg',
+                        data: photoBuffer.toString('base64')
+                    }
                 });
             }
-            inputPayload.push({ type: 'text', text: promptText || 'Опиши это изображение.' });
+            contents.push(promptText || 'Опиши это изображение.');
 
-            // Строго Interactions API (без generateContent)
-            const interaction = await ai.interactions.create({
+            const response = await ai.models.generateContent({
                 model: modelData.modelId,
-                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
+                contents: contents
             });
 
-            const replyText = interaction.text || interaction.outputMessage || 'Не удалось получить ответ.';
+            const replyText = response.text || 'Не удалось получить ответ.';
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
             await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
 
@@ -353,32 +350,20 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             await ctx.sendChatAction('upload_photo');
             
             const selectedRatio = userConfig.aspect_ratio || '1:1';
-            let inputPayload = [];
-            
-            const fullPrompt = `${promptText || 'Сгенерируй изображение'}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
-            inputPayload.push({ type: 'text', text: fullPrompt });
-            
-            if (photoBuffer) {
-                inputPayload.push({
-                    type: 'image',
-                    mime_type: 'image/jpeg',
-                    data: photoBuffer.toString('base64')
-                });
-            }
+            const fullPrompt = `${promptText || 'Сгенерируй изображение'}. ${modelData.qualityPrompt}`;
 
-            const interaction = await ai.interactions.create({
-                model: modelData.modelId, 
-                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
+            const response = await ai.models.generateImages({
+                model: modelData.modelId,
+                prompt: fullPrompt,
+                config: {
+                    numberOfImages: 1,
+                    outputMimeType: 'image/jpeg',
+                    aspectRatio: selectedRatio
+                }
             });
 
-            let imgBuffer = null;
-            if (interaction.outputImage && interaction.outputImage.data) {
-                imgBuffer = Buffer.from(interaction.outputImage.data, 'base64');
-            }
-
-            if (!imgBuffer) {
-                throw new Error('Изображение не было возвращено моделью.');
-            }
+            const imageBytes = response.generatedImages[0].image.imageBytes;
+            const imgBuffer = Buffer.from(imageBytes, 'base64');
 
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
             const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
