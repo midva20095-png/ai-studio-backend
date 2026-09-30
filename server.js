@@ -22,16 +22,22 @@ const MODELS = {
     'gemini_38_flash': { 
         name: 'Gemini 3.8 Flash', 
         modelId: 'gemini-3.8-flash', 
-        cost: 1,               // Стоимость 1 запроса = 1 кредит (5 руб)
-        maxInputChars: 3000,   // Лимит символов на вход
-        maxOutputTokens: 1200  // Лимит токенов на выход (~3500 символов)
+        cost: 1,               // 1 запрос = 1 кредит
+        maxInputChars: 3000,   // Лимит входных символов
+        maxOutputTokens: 1200  // Лимит выходных токенов
     }
 };
 
-// Хранение выбранной модели для каждого пользователя
+// Хранение данных
 const userModels = {};
+const processedPayments = new Set(); // Защита от повторного начисления по одной ссылке
 
 const bot = new Telegraf(BOT_TOKEN);
+
+// Фиксированная нижняя клавиатура
+const mainReplyKeyboard = Markup.keyboard([
+    ['🤖 Выбор модели', '💳 Личный кабинет']
+]).resize();
 
 function escapeMarkdown(text) {
     if (!text) return '';
@@ -80,20 +86,31 @@ async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
         const confirmationUrl = response.data.confirmation.confirmation_url;
         const paymentId = response.data.id;
 
-        return ctx.reply(
+        const sentMessage = await ctx.reply(
             `💳 *Ссылка на оплату создана!*\n\n` +
             `💵 Сумма: *${amountRub} руб.*\n` +
             `🪙 Кредитов к зачислению: *${creditsCount}*\n\n` +
-            `⚠️ Оплатите по ссылке, затем нажмите кнопку «🔄 Проверить оплату»:`,
+            `⚠️ Ссылка действительна 15 минут. Оплатите по ссылке и нажмите «🔄 Проверить оплату»:`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
                     [Markup.button.url(`🔗 Оплатить ${amountRub} руб.`, confirmationUrl)],
-                    [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentId}`)],
-                    [Markup.button.callback(`🔙 На главную`, `menu_main`)]
+                    [Markup.button.callback(`🔄 Проверить оплату`, `check_${paymentId}`)]
                 ])
             }
         );
+
+        // Авто-удаление сообщения с кнопкой оплаты через 15 минут для безопасности
+        setTimeout(async () => {
+            if (!processedPayments.has(paymentId)) {
+                try {
+                    await ctx.telegram.deleteMessage(sentMessage.chat.id, sentMessage.message_id);
+                } catch (e) {
+                    // Игнорируем, если сообщение уже удалено
+                }
+            }
+        }, 15 * 60 * 1000);
+
     } catch (error) {
         console.error('Ошибка ЮKassa:', error.response?.data || error.message);
         return ctx.reply('❌ Ошибка создания платежа в ЮKassa. Попробуйте позже.');
@@ -129,19 +146,16 @@ bot.start(async (ctx) => {
         `🆔 Твой ID: \`${userId}\`\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
         `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*\n\n` +
-        `Используй меню ниже для выбора модели или пополнения баланса:`,
+        `Используй меню ниже для управления ботом:`,
         {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🤖 Выбор модели', 'menu_models')],
-                [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
-            ])
+            ...mainReplyKeyboard
         }
     );
 });
 
-bot.action('menu_models', async (ctx) => {
-    await ctx.answerCbQuery();
+// Кнопки постоянного нижнего меню
+bot.hears('🤖 Выбор модели', async (ctx) => {
     const userId = ctx.from.id;
     const activeModelKey = userModels[userId] || 'gemini_38_flash';
 
@@ -151,8 +165,30 @@ bot.action('menu_models', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит = 5 руб)', 'set_model_gemini_38_flash')],
-                [Markup.button.callback('🔙 На главную', 'menu_main')]
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит)', 'set_model_gemini_38_flash')]
+            ])
+        }
+    );
+});
+
+bot.hears('💳 Личный кабинет', async (ctx) => {
+    const userId = ctx.from.id;
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
+
+    ctx.reply(
+        `💳 *Личный кабинет / Пополнение*\n\n` +
+        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
+        `📊 Курс: *1 кредит = 5 руб.* (1 запрос = 1 кредит)\n\n` +
+        `Выберите пакет кредитов для покупки:`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🧪 1 руб. (1 кредит - ТЕСТ)', 'pay_1')],
+                [Markup.button.callback('📦 Старт: 100 ₽ (20 кр.)', 'pay_100')],
+                [Markup.button.callback('📦 Стандарт: 500 ₽ (100 кр.)', 'pay_500')],
+                [Markup.button.callback('📦 Комфорт: 1 000 ₽ (200 кр.)', 'pay_1000')],
+                [Markup.button.callback('📦 Топ: 2 500 ₽ (500 кр.)', 'pay_2500')],
+                [Markup.button.callback('🚀 Максимум: 5 000 ₽ (1 000 кр.)', 'pay_5000')]
             ])
         }
     );
@@ -165,60 +201,24 @@ bot.action('set_model_gemini_38_flash', async (ctx) => {
     ctx.reply('✅ Активна модель: *Gemini 3.8 Flash*', { parse_mode: 'Markdown' });
 });
 
-bot.action('menu_buy', async (ctx) => {
-    await ctx.answerCbQuery();
-    const userId = ctx.from.id;
-    const balance = await callGoogleSheet('get', userId, ctx.from.username);
-
-    ctx.reply(
-        `💳 *Пополнение баланса*\n\n` +
-        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
-        `📊 Курс: *1 кредит = 5 руб.* (1 запрос = 1 кредит)\n\n` +
-        `Выберите пакет кредитов:`,
-        {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🪙 5 руб. (1 кредит)', 'pay_5')],
-                [Markup.button.callback('🪙 50 руб. (10 кредитов)', 'pay_50'), Markup.button.callback('🪙 100 руб. (20 кредитов)', 'pay_100')],
-                [Markup.button.callback('🪙 500 руб. (100 кредитов)', 'pay_500'), Markup.button.callback('🪙 1000 руб. (200 кредитов)', 'pay_1000')],
-                [Markup.button.callback('🚀 5000 руб. (1000 кредитов)', 'pay_5000')],
-                [Markup.button.callback('🔙 На главную', 'menu_main')]
-            ])
-        }
-    );
-});
-
-bot.action('pay_5', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5, 1); });
-bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50, 10); });
+// Обработчики кнопок оплаты
+bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
 bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
 bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
 bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1000, 200); });
+bot.action('pay_2500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 2500, 500); });
 bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
-bot.action('menu_main', async (ctx) => {
-    await ctx.answerCbQuery();
-    const userId = ctx.from.id;
-    const balance = await callGoogleSheet('get', userId, ctx.from.username);
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
-    const activeModel = MODELS[activeModelKey];
-
-    ctx.reply(
-        `🏠 *Главное меню*\n\n` +
-        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
-        `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*`,
-        {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🤖 Выбор модели', 'menu_models')],
-                [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
-            ])
-        }
-    );
-});
-
+// ПРОВЕРКА ОПЛАТЫ С ЗАЩИТОЙ И УДАЛЕНИЕМ КНОПОК
 bot.action(/^check_(.+)$/, async (ctx) => {
     const paymentId = ctx.match[1];
     const userId = ctx.from.id;
+
+    if (processedPayments.has(paymentId)) {
+        await ctx.answerCbQuery('⚠️ Этот платеж уже зачислен!', { show_alert: true });
+        try { await ctx.deleteMessage(); } catch(e) {}
+        return;
+    }
 
     await ctx.answerCbQuery('Проверяем платеж...');
 
@@ -228,30 +228,26 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 
     if (paymentInfo.status === 'succeeded') {
+        processedPayments.add(paymentId); // Фиксируем факт начисления
+
         const credits = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, credits);
 
+        // Удаляем сообщение с кнопками оплаты
         try {
-            await ctx.editMessageText(
-                `✅ *Платеж успешно подтвержден!*\n` +
-                `💵 Сумма: ${amountPaid} руб.\n` +
-                `🪙 Зачислено кредитов: ${credits}\n` +
-                `💰 Ваш новый баланс: *${newBalance}* кредитов`,
-                { parse_mode: 'Markdown' }
-            );
+            await ctx.deleteMessage();
         } catch (e) {
-            // Игнорируем ошибку при повторном клике
+            // Игнорируем, если не удалось удалить
         }
 
         return ctx.reply(
-            `🎉 Баланс успешно пополнен на *${credits}* кредитов!\n` +
-            `💰 Текущий баланс: *${newBalance}* кредитов`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([[Markup.button.callback('🔙 На главную', 'menu_main')]])
-            }
+            `✅ *Платеж успешно подтвержден!*\n\n` +
+            `💵 Сумма: *${amountPaid} руб.*\n` +
+            `🪙 Зачислено: *${credits}* кредитов\n` +
+            `💰 Ваш новый баланс: *${newBalance}* кредитов`,
+            { parse_mode: 'Markdown' }
         );
     } else {
         return ctx.reply(
@@ -268,6 +264,9 @@ bot.on('text', async (ctx) => {
 
     const activeModelKey = userModels[userId] || 'gemini_38_flash';
     const selectedModel = MODELS[activeModelKey];
+
+    // Игнорируем нажатия на системные кнопки
+    if (text === '🤖 Выбор модели' || text === '💳 Личный кабинет') return;
 
     // ⛔ 1. ПРОВЕРКА ДЛИНЫ ВХОДНОГО СООБЩЕНИЯ
     if (text.length > selectedModel.maxInputChars) {
@@ -292,11 +291,8 @@ bot.on('text', async (ctx) => {
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
             `📉 Требуется: ${selectedModel.cost} кредит (5 руб)\n` +
             `💰 Ваш баланс: ${balance} кредитов\n\n` +
-            `Пополните баланс в личном кабинете:`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([[Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]])
-            }
+            `Пополните баланс в меню «💳 Личный кабинет».`,
+            { parse_mode: 'Markdown' }
         );
     }
 
@@ -304,7 +300,7 @@ bot.on('text', async (ctx) => {
         const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         await ctx.sendChatAction('typing');
 
-        // ⛔ 3. ЗАПРОС К GEMINI С ОГРАНИЧЕНИЕМ НА ВЫХОД (maxOutputTokens)
+        // ⛔ 3. ЗАПРОС К GEMINI С ОГРАНИЧЕНИЕМ НА ВЫХОД
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
