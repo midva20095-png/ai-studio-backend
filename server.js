@@ -1,93 +1,119 @@
-// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ ---
-async function handleAIQuery(ctx, promptText, photoBuffer = null) {
-    const userId = ctx.from.id;
-    const username = ctx.from.username || 'User';
+export type ModelKey =
+  | 'flash_3_8'
+  | 'flash_lite'
+  | 'pro_3_1'
+  | 'deep_research'
+  | 'nano_banana_2'
+  | 'nano_banana_pro'
+  | 'nano_banana_4k';
 
-    if (isProcessing.has(userId)) {
-        return ctx.reply('⏳ Пожалуйста, дождитесь окончания предыдущего запроса.');
-    }
+export type ModelType = 'text' | 'image';
 
-    if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
-    const userConfig = userState[userId];
-    const modelData = MODELS[userConfig.model];
+export interface ModelPrice {
+  name: string;
+  type: ModelType;
+  cost: number;
+  maxInputChars: number;
+  maxOutputChars?: number;
+  quality?: string;
+  buttonLabel: string;
+  description: string;
+}
 
-    if (promptText && promptText.length > modelData.maxInputChars) {
-        return safeReply(
-            ctx, 
-            `⛔️ **Превышен лимит символов!**\n\nДля модели *${modelData.name}* максимальная длина запроса составляет **${modelData.maxInputChars}** символов.\nДлина вашего текста: ${promptText.length} символов.\n\nПожалуйста, сократите текст.`
-        );
-    }
+export const RUB_PER_COIN = 5;
 
-    const balance = await callGoogleSheet('get', userId, username);
-    if (balance === null) return ctx.reply('❌ Ошибка связи с базой данных.');
+export const MODELS: Record<ModelKey, ModelPrice> = {
+  flash_3_8: {
+    name: 'Flash 3.8',
+    type: 'text',
+    cost: 1,
+    maxInputChars: 4000,
+    maxOutputChars: 2000,
+    buttonLabel: '⚡ Flash 3.8 · 1 🪙',
+    description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽',
+  },
+  flash_lite: {
+    name: 'Flash-Lite',
+    type: 'text',
+    cost: 1,
+    maxInputChars: 4000,
+    maxOutputChars: 2000,
+    buttonLabel: '⚡ Flash-Lite · 1 🪙',
+    description: 'Вход до 4 000 символов · ответ до 2 000 символов · 5 ₽',
+  },
+  pro_3_1: {
+    name: 'Pro 3.1',
+    type: 'text',
+    cost: 3,
+    maxInputChars: 20000,
+    maxOutputChars: 8000,
+    buttonLabel: '🧠 Pro 3.1 · 3 🪙',
+    description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽',
+  },
+  deep_research: {
+    name: 'Deep Research',
+    type: 'text',
+    cost: 3,
+    maxInputChars: 20000,
+    maxOutputChars: 8000,
+    buttonLabel: '🔎 Deep Research · 3 🪙',
+    description: 'Вход до 20 000 символов · ответ до 8 000 символов · 15 ₽',
+  },
+  nano_banana_2: {
+    name: 'Nano Banana 2',
+    type: 'image',
+    cost: 2,
+    maxInputChars: 800,
+    quality: 'HD',
+    buttonLabel: '🖼 Nano Banana 2 · 2 🪙',
+    description: 'HD · описание до 800 символов · 10 ₽',
+  },
+  nano_banana_pro: {
+    name: 'Nano Banana Pro',
+    type: 'image',
+    cost: 4,
+    maxInputChars: 800,
+    quality: 'Ultra-HD',
+    buttonLabel: '✨ Nano Banana Pro · 4 🪙',
+    description: 'Ultra-HD · описание до 800 символов · 20 ₽',
+  },
+  nano_banana_4k: {
+    name: 'Nano Banana 4K',
+    type: 'image',
+    cost: 10,
+    maxInputChars: 800,
+    quality: 'Премиум 4K фотореализм',
+    buttonLabel: '💎 Nano Banana 4K · 10 🪙',
+    description: 'Премиум 4K фотореализм · описание до 800 символов · 50 ₽',
+  },
+};
 
-    if (balance < modelData.cost) {
-        return safeReply(ctx, `❌ Недостаточно монет.\nТребуется: ${modelData.cost} 🪙 | Баланс: ${balance} 🪙`);
-    }
+export const PAYMENT_PACKAGES = [
+  { id: 'start', name: 'Старт', priceRub: 150, coins: 30, baseCoins: 30, bonusCoins: 0 },
+  { id: 'standard', name: 'Стандарт', priceRub: 500, coins: 100, baseCoins: 100, bonusCoins: 0 },
+  { id: 'lux', name: 'Люкс', priceRub: 1000, coins: 250, baseCoins: 200, bonusCoins: 50 },
+  { id: 'vip', name: 'VIP', priceRub: 2500, coins: 650, baseCoins: 500, bonusCoins: 150 },
+] as const;
 
-    isProcessing.add(userId);
+export type PaymentPackageId = (typeof PAYMENT_PACKAGES)[number]['id'];
 
-    try {
-        if (modelData.type === 'text') {
-            await ctx.sendChatAction('typing');
-            let contents = photoBuffer 
-                ? [{ inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }, promptText || 'Опиши это изображение.']
-                : promptText;
+/** Используйте эту функцию и в интерфейсе, и на сервере. */
+export function validateModelInput(modelKey: string, text: string): ModelPrice {
+  if (!Object.prototype.hasOwnProperty.call(MODELS, modelKey)) {
+    throw new Error('Неизвестная модель.');
+  }
 
-            const response = await ai.models.generateContent({
-                model: modelData.modelId,
-                contents: contents,
-                config: {
-                    maxOutputTokens: modelData.maxOutputTokens
-                }
-            });
+  const model = MODELS[modelKey as ModelKey];
+  const length = Array.from(text).length;
 
-            const replyText = response.text || 'Не удалось получить ответ.';
-            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
+  if (!text.trim()) {
+    throw new Error('Введите текст запроса.');
+  }
+  if (length > model.maxInputChars) {
+    throw new Error(
+      `Для модели ${model.name} максимум ${model.maxInputChars} символов. Сейчас: ${length}. Монеты не списаны.`,
+    );
+  }
 
-        } else if (modelData.type === 'image') {
-            await ctx.sendChatAction('upload_photo');
-            
-            const selectedRatio = userConfig.aspect_ratio || '1:1';
-            let inputPayload = [];
-            
-            const fullPrompt = `${promptText}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
-            inputPayload.push({ type: 'text', text: fullPrompt });
-
-            if (photoBuffer) {
-                inputPayload.push({
-                    type: 'image',
-                    mime_type: 'image/jpeg',
-                    data: photoBuffer.toString('base64')
-                });
-            }
-
-            // Вызов генерации через Interactions API (Nano Banana)
-            const interaction = await ai.interactions.create({
-                model: modelData.modelId, 
-                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
-            });
-
-            let imgBuffer = null;
-            if (interaction.outputImage && interaction.outputImage.data) {
-                imgBuffer = Buffer.from(interaction.outputImage.data, 'base64');
-            }
-
-            if (!imgBuffer) {
-                throw new Error('Изображение не было возвращено моделью.');
-            }
-
-            const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
-            
-            await safeReplyWithPhoto(ctx, imgBuffer, caption);
-        }
-
-    } catch (error) {
-        console.error('Ошибка ИИ:', error);
-        ctx.reply('⚠ Произошла ошибка при генерации. Монеты не были списаны.');
-    } finally {
-        isProcessing.delete(userId);
-    }
+  return model;
 }
