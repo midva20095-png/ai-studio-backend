@@ -219,7 +219,78 @@ bot.action('pay_1000', async (ctx) => { await ctx.answerCbQuery(); await generat
 bot.action('pay_2500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 2500, 500); });
 bot.action('pay_5000', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5000, 1000); });
 
-// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ С ОГРАНИЧЕНИЯМИ
+// 4. ОБРАБОТКА ИЗОБРАЖЕНИЙ (МУЛЬТИМОДАЛЬНЫЕ ЗАПРОСЫ)
+bot.on('photo', async (ctx) => {
+    const userId = ctx.from.id;
+    const caption = (ctx.message.caption || '').trim();
+
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const selectedModel = MODELS[activeModelKey];
+
+    // ⛔ 1. ПРОВЕРКА БАЛАНСА ПОЛЬЗОВАТЕЛЯ
+    const balance = await callGoogleSheet('get', userId, ctx.from.username);
+    if (balance === null) {
+        return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
+    }
+
+    if (balance < selectedModel.cost) {
+        return ctx.reply(
+            `❌ *Недостаточно кредитов!*\n\n` +
+            `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
+            `📉 Требуется: ${selectedModel.cost} кредит (5 руб)\n` +
+            `💰 Ваш баланс: ${balance} кредитов\n\n` +
+            `Пополните баланс в меню «💳 Личный кабинет».`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    try {
+        await ctx.sendChatAction('typing');
+
+        // Получаем ссылку на самый крупный вариант изображения
+        const photoArray = ctx.message.photo;
+        const fileId = photoArray[photoArray.length - 1].file_id;
+        const fileLink = await ctx.telegram.getFileLink(fileId);
+
+        // Скачиваем фото в буфер
+        const imgResponse = await axios.get(fileLink.href || fileLink.toString(), { responseType: 'arraybuffer' });
+        const base64Image = Buffer.from(imgResponse.data).toString('base64');
+
+        const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+        const promptText = caption || 'Опиши подробно, что изображено на этом фото.';
+
+        const contents = [
+            promptText,
+            {
+                inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: base64Image
+                }
+            }
+        ];
+
+        const response = await ai.models.generateContent({
+            model: selectedModel.modelId,
+            contents: contents,
+            config: {
+                maxOutputTokens: selectedModel.maxOutputTokens
+            }
+        });
+
+        const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
+
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`, {
+            parse_mode: 'Markdown'
+        });
+
+    } catch (error) {
+        console.error('Ошибка обработки изображения Gemini AI:', error);
+        ctx.reply('❌ Произошла ошибка при обработке картинки нейросетью. Попробуйте еще раз.');
+    }
+});
+
+// 5. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ С ОГРАНИЧЕНИЯМИ
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -283,7 +354,7 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// 5. ЗАПУСК СЕРВЕРА
+// 6. ЗАПУСК СЕРВЕРА
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 if (RENDER_EXTERNAL_URL) {
