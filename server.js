@@ -17,18 +17,18 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🤖 СПИСОК ДОСТУПНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
+// 🤖 СПИСОК ОФИЦИАЛЬНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
 const MODELS = {
-    'gemini_38_flash': { 
-        name: 'Gemini 3.8 Flash', 
-        modelId: 'gemini-3.8-flash', 
+    'gemini_15_flash': { 
+        name: 'Gemini 1.5 Flash', 
+        modelId: 'gemini-1.5-flash', 
         cost: 1,               // 1 запрос = 1 кредит (5 руб)
         maxInputChars: 3000,   // Лимит входных символов
         maxOutputTokens: 1200  // Лимит выходных токенов
     },
-    'gemini_31_pro': { 
-        name: 'Gemini 3.1 Pro', 
-        modelId: 'gemini-3.1-pro', 
+    'gemini_15_pro': { 
+        name: 'Gemini 1.5 Pro', 
+        modelId: 'gemini-1.5-pro', 
         cost: 3,               // 1 запрос = 3 кредита (15 руб)
         maxInputChars: 8000,   // Увеличенный лимит символов для Pro
         maxOutputTokens: 2048  // Увеличенный лимит ответа
@@ -155,7 +155,7 @@ bot.start(async (ctx) => {
     const safeUsername = escapeMarkdown(username);
     
     const balance = await callGoogleSheet('get', userId, username);
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModelKey = userModels[userId] || 'gemini_15_flash';
     const activeModel = MODELS[activeModelKey];
 
     ctx.reply(
@@ -174,7 +174,7 @@ bot.start(async (ctx) => {
 // Кнопки постоянного нижнего меню
 bot.hears('🤖 Выбор модели', async (ctx) => {
     const userId = ctx.from.id;
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModelKey = userModels[userId] || 'gemini_15_flash';
 
     ctx.reply(
         `🤖 *Выберите языковую модель:*\n\n` +
@@ -182,8 +182,8 @@ bot.hears('🤖 Выбор модели', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит)', 'set_model_gemini_38_flash')],
-                [Markup.button.callback('🧠 Gemini 3.1 Pro (3 кредита)', 'set_model_gemini_31_pro')]
+                [Markup.button.callback('⚡ Gemini 1.5 Flash (1 кредит)', 'set_model_gemini_15_flash')],
+                [Markup.button.callback('🧠 Gemini 1.5 Pro (3 кредита)', 'set_model_gemini_15_pro')]
             ])
         }
     );
@@ -213,18 +213,18 @@ bot.hears('💳 Личный кабинет', async (ctx) => {
 });
 
 // Переключение моделей
-bot.action('set_model_gemini_38_flash', async (ctx) => {
+bot.action('set_model_gemini_15_flash', async (ctx) => {
     const userId = ctx.from.id;
-    userModels[userId] = 'gemini_38_flash';
-    await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
-    ctx.reply('✅ Активна модель: *Gemini 3.8 Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
+    userModels[userId] = 'gemini_15_flash';
+    await ctx.answerCbQuery('Выбрана модель Gemini 1.5 Flash');
+    ctx.reply('✅ Активна модель: *Gemini 1.5 Flash* (1 кредит / запрос)', { parse_mode: 'Markdown' });
 });
 
-bot.action('set_model_gemini_31_pro', async (ctx) => {
+bot.action('set_model_gemini_15_pro', async (ctx) => {
     const userId = ctx.from.id;
-    userModels[userId] = 'gemini_31_pro';
-    await ctx.answerCbQuery('Выбрана модель Gemini 3.1 Pro');
-    ctx.reply('✅ Активна модель: *Gemini 3.1 Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
+    userModels[userId] = 'gemini_15_pro';
+    await ctx.answerCbQuery('Выбрана модель Gemini 1.5 Pro');
+    ctx.reply('✅ Активна модель: *Gemini 1.5 Pro* (3 кредита / запрос)', { parse_mode: 'Markdown' });
 });
 
 // Обработчики кнопок оплаты
@@ -240,7 +240,7 @@ bot.on('photo', async (ctx) => {
     const userId = ctx.from.id;
     const caption = (ctx.message.caption || '').trim();
 
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModelKey = userModels[userId] || 'gemini_15_flash';
     const selectedModel = MODELS[activeModelKey];
 
     // ⛔ 1. ПРОВЕРКА БАЛАНСА ПОЛЬЗОВАТЕЛЯ
@@ -309,7 +309,7 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModelKey = userModels[userId] || 'gemini_15_flash';
     const selectedModel = MODELS[activeModelKey];
 
     // Игнорируем нажатия на системные кнопки
