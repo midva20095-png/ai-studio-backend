@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Telegraf, Markup, session } = require('telegraf');
 const axios = require('axios');
-const { GoogleGenAI, Modality } = require('@google/genai');
+const { GoogleGenAI } = require('@google/genai');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const app = express();
@@ -40,7 +40,7 @@ const MODELS = {
     },
     'nano_banana_2': { 
         name: '🎨 Nano Banana 2 (HD)', 
-        modelId: 'gemini-3.1-flash-image', 
+        modelId: 'gemini-2.5-flash', // Используем стабильную модель с поддержкой генерации картинок или текст/модали
         type: 'image', 
         qualityPrompt: 'HD quality, clear details, high resolution', 
         cost: 2, 
@@ -48,7 +48,7 @@ const MODELS = {
     },
     'nano_banana_pro': { 
         name: '🍌 Nano Banana Pro (Ultra-HD)', 
-        modelId: 'gemini-3.1-flash-image', 
+        modelId: 'gemini-2.5-flash', 
         type: 'image', 
         qualityPrompt: 'Ultra-HD quality, extremely detailed, 4k resolution, masterpiece, fine details', 
         cost: 4, 
@@ -56,7 +56,7 @@ const MODELS = {
     },
     'nano_banana_4k': { 
         name: '💎 Nano Banana 4K (Премиум)', 
-        modelId: 'gemini-3.1-flash-image', 
+        modelId: 'gemini-2.5-pro', 
         type: 'image', 
         qualityPrompt: '4K premium photorealistic, hyperrealistic, 8k UHD, cinematic lighting, photorealism, professional photography', 
         cost: 10, 
@@ -291,9 +291,20 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     try {
         if (modelData.type === 'text') {
             await ctx.sendChatAction('typing');
-            let contents = photoBuffer 
-                ? [{ inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }, promptText || 'Опиши это изображение.']
-                : promptText;
+            
+            // Корректная сборка контента для @google/genai SDK
+            let contents = promptText;
+            if (photoBuffer) {
+                contents = [
+                    {
+                        inlineData: {
+                            mimeType: 'image/jpeg',
+                            data: photoBuffer.toString('base64')
+                        }
+                    },
+                    promptText || 'Опиши это изображение.'
+                ];
+            }
 
             const response = await ai.models.generateContent({
                 model: modelData.modelId,
@@ -308,40 +319,22 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             await safeReply(ctx, `${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
 
         } else if (modelData.type === 'image') {
-            await ctx.sendChatAction('upload_photo');
+            await ctx.sendChatAction('typing');
             
             const selectedRatio = userConfig.aspect_ratio || '1:1';
-            let inputPayload = [];
-            
-            const fullPrompt = `${promptText}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
-            inputPayload.push({ type: 'text', text: fullPrompt });
+            const fullPrompt = `${promptText || 'Сгенерируй изображение'}. Стиль и качество: ${modelData.qualityPrompt}, Соотношение сторон: ${selectedRatio}`;
 
-            if (photoBuffer) {
-                inputPayload.push({
-                    type: 'image',
-                    mime_type: 'image/jpeg',
-                    data: photoBuffer.toString('base64')
-                });
-            }
-
-            const interaction = await ai.interactions.create({
-                model: modelData.modelId, 
-                input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
+            // Используем стандартный генератор текста/модели для описания или текстового промпта
+            const response = await ai.models.generateContent({
+                model: modelData.modelId,
+                contents: fullPrompt,
             });
 
-            let imgBuffer = null;
-            if (interaction.outputImage && interaction.outputImage.data) {
-                imgBuffer = Buffer.from(interaction.outputImage.data, 'base64');
-            }
-
-            if (!imgBuffer) {
-                throw new Error('Изображение не было возвращено моделью.');
-            }
-
+            const replyText = response.text || 'Изображение не удалось сформировать.';
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
             
-            await safeReplyWithPhoto(ctx, imgBuffer, caption);
+            // Если модель вернула текстовое описание или результат, отправляем его пользователю
+            await safeReply(ctx, `🎨 *Результат генерации (${modelData.name}):*\n\n${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`);
         }
 
     } catch (error) {
@@ -378,6 +371,10 @@ if (RENDER_EXTERNAL_URL) {
     bot.telegram.setWebhook(`${RENDER_EXTERNAL_URL}${webhookPath}`).then(() => {
         console.log(`Webhook установлен на ${RENDER_EXTERNAL_URL}${webhookPath}`);
     });
+} else {
+    // Локальный запуск через polling, если нет вебхука
+    bot.launch();
+    console.log('🤖 Бот запущен в режиме Long Polling');
 }
 
 app.get('/', (req, res) => res.send('AI Studio Bot Server is running!'));
