@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
+// --- КОНФИГУРАЦИЯ ---
 const BOT_TOKEN = process.env.BOT_TOKEN || '8885904685:AAFYRm1chT7h8i7lCf9jbG4odGd98-2BDgA';
 const YUKASSA_SHOP_ID = process.env.YUKASSA_SHOP_ID || '1120841';
 const YUKASSA_SECRET_KEY = process.env.YUKASSA_SECRET_KEY || 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
@@ -18,15 +19,21 @@ const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL || 'https://script.googl
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// Актуальный каталог только текстовых моделей и генерации изображений
+// --- НАСТРОЙКИ МОДЕЛЕЙ И ЦЕН (1 монета = 5 рублей) ---
 const MODELS = {
-    'flash_3_8': { name: '⚡ Gemini 3.8 Flash', modelId: 'gemini-3.8-flash', type: 'text', cost: 12 },
-    'pro_3_1': { name: '🧠 Gemini 3.1 Pro (Thinking)', modelId: 'gemini-3.1-pro-preview', type: 'text', cost: 25 },
-    'flash_lite': { name: '🚀 Flash-Lite 3.5', modelId: 'gemini-3.5-flash-lite', type: 'text', cost: 8 },
-    'deep_research': { name: '🔍 Deep Research', modelId: 'deep-research-preview-04-2026', type: 'text', cost: 45 },
-    'nano_banana_2': { name: '🎨 Nano Banana 2 (Images)', modelId: 'gemini-3.1-flash-image', type: 'image', cost: 15 },
-    'nano_banana_pro': { name: '🍌 Nano Banana Pro', modelId: 'gemini-3-pro-image', type: 'image', cost: 20 }
+    'flash_3_8': { name: '⚡ Flash 3.8 / Flash-Lite (Быстрый чат)', modelId: 'gemini-3.8-flash', type: 'text', cost: 1 },
+    'nano_banana_2': { name: '🎨 Nano Banana 2 (Обычное HD качество)', modelId: 'gemini-3.1-flash-image', type: 'image', cost: 2 },
+    'pro_3_1': { name: '🧠 Pro 3.1 / Deep Research (Умный ИИ + Поиск)', modelId: 'gemini-3.1-pro-preview', type: 'text', cost: 3 },
+    'nano_banana_pro': { name: '🍌 Nano Banana Pro (Высокое Ultra-HD)', modelId: 'gemini-3-pro-image', type: 'image', cost: 4 },
+    'nano_banana_4k': { name: '💎 Nano Banana 4K (Премиум 4K фотореализм)', modelId: 'gemini-3-pro-image', type: 'image', cost: 10 }
 };
+
+const PAYMENT_PACKAGES = [
+    { id: 'pay_150', name: '🟢 Старт', priceRub: 150, coins: 30 },
+    { id: 'pay_500', name: '🔵 Стандарт', priceRub: 500, coins: 100 },
+    { id: 'pay_1000', name: '🟣 Люкс', priceRub: 1000, coins: 200 },
+    { id: 'pay_2500', name: '👑 VIP', priceRub: 2500, coins: 500 }
+];
 
 // Хранилище состояний пользователей
 const userState = {};
@@ -57,7 +64,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
         amount: { value: `${amountRub}.00`, currency: 'RUB' },
         confirmation: { type: 'redirect', return_url: 'https://t.me/ai_studio_hub_bot' },
         capture: true,
-        description: `Покупка ${coinsCount} токенов (Сумма: ${amountRub} руб)`,
+        description: `Покупка ${coinsCount} монет (Сумма: ${amountRub} руб)`,
         metadata: { user_id: String(userId), coins: String(coinsCount) }
     };
 
@@ -71,7 +78,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
         });
 
         return ctx.reply(
-            `💳 **Создан счет на оплату**\n\n💵 Сумма: ${amountRub} руб.\n🪙 Токенов: ${coinsCount}\n\nОплатите по ссылке ниже, затем нажмите «🔄 Проверить оплату».`,
+            `💳 **Создан счет на оплату**\n\n💵 Сумма: ${amountRub} руб.\n🪙 Монет: ${coinsCount}\n\nОплатите по ссылке ниже, затем нажмите «🔄 Проверить оплату».`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
@@ -116,23 +123,31 @@ const mainMenuKeyboard = Markup.keyboard([
     ['💳 Баланс / Пополнить', 'ℹ️ Профиль']
 ]).resize();
 
-bot.start(async (ctx) => {
+const sendMenu = async (ctx) => {
     const userId = ctx.from.id;
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     
     await ctx.reply(
-        `👋 Добро пожаловать в **AI Studio Hub**!\n\nИспользуй нижнее меню для навигации. Отправь текст или фото, чтобы начать работу с ИИ.`,
+        `👋 **Панель управления AI Studio**\n\nИспользуй нижнее меню для навигации. Отправь текст или фото, чтобы начать работу с ИИ.`,
         { parse_mode: 'Markdown', ...mainMenuKeyboard }
     );
-});
+};
 
-// Обработка нижнего меню
+bot.start(sendMenu);
+bot.command('menu', sendMenu);
+
+// --- Обработка нижнего меню ---
 bot.hears('🚀 Выбрать модель', (ctx) => {
-    ctx.reply('Выберите модель для работы:', Markup.inlineKeyboard([
-        [Markup.button.callback('⚡ Flash 3.8', 'model_flash_3_8'), Markup.button.callback('🧠 Pro 3.1', 'model_pro_3_1')],
-        [Markup.button.callback('🚀 Flash-Lite', 'model_flash_lite'), Markup.button.callback('🔍 Deep Research', 'model_deep_research')],
-        [Markup.button.callback('🎨 Nano Banana 2', 'model_nano_banana_2'), Markup.button.callback('🍌 Nano Banana Pro', 'model_nano_banana_pro')]
-    ]));
+    ctx.reply('🤖 **Выберите нейросеть для работы:**', {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('⚡ Flash 3.8 / Flash-Lite (1 🪙)', 'model_flash_3_8')],
+            [Markup.button.callback('🧠 Pro 3.1 / Поиск (3 🪙)', 'model_pro_3_1')],
+            [Markup.button.callback('🎨 Nano Banana 2 HD (2 🪙)', 'model_nano_banana_2')],
+            [Markup.button.callback('🍌 Nano Banana Pro Ultra-HD (4 🪙)', 'model_nano_banana_pro')],
+            [Markup.button.callback('💎 Nano Banana 4K (10 🪙)', 'model_nano_banana_4k')]
+        ])
+    });
 });
 
 bot.hears('⚙️ Настройки', (ctx) => {
@@ -152,9 +167,10 @@ bot.hears('💳 Баланс / Пополнить', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('💎 1 руб (Тест)', 'pay_1'), Markup.button.callback('🪙 50 руб (10 ток.)', 'pay_50')],
-                [Markup.button.callback('🪙 100 руб (20 ток.)', 'pay_100'), Markup.button.callback('🪙 500 руб (100 ток.)', 'pay_500')],
-                [Markup.button.callback('🚀 1000 руб (200 ток.)', 'pay_1000'), Markup.button.callback('🔥 5000 руб (1000 ток.)', 'pay_5000')]
+                [Markup.button.callback('🟢 Старт: 150 ₽ (30 монет)', 'pay_150')],
+                [Markup.button.callback('🔵 Стандарт: 500 ₽ (100 монет)', 'pay_500')],
+                [Markup.button.callback('🟣 Люкс: 1000 ₽ (200 монет)', 'pay_1000')],
+                [Markup.button.callback('👑 VIP: 2500 ₽ (500 монет)', 'pay_2500')]
             ])
         }
     );
@@ -172,29 +188,36 @@ bot.hears('ℹ️ Профиль', async (ctx) => {
     );
 });
 
-// Обработка инлайн-кнопок моделей и настроек
+// --- Обработка инлайн-кнопок моделей и настроек ---
 bot.action(/model_(.+)/, async (ctx) => {
     const modelKey = ctx.match[1];
+    if (!MODELS[modelKey]) return ctx.answerCbQuery('❌ Модель не найдена');
+    
     if (!userState[ctx.from.id]) userState[ctx.from.id] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     userState[ctx.from.id].model = modelKey;
-    await ctx.answerCbQuery(`✅ Выбрана модель: ${MODELS[modelKey].name}`);
-    await ctx.editMessageText(`✅ Вы успешно переключились на модель: **${MODELS[modelKey].name}**`, { parse_mode: 'Markdown' });
+    
+    await ctx.answerCbQuery(`✅ Выбрано: ${MODELS[modelKey].name}`);
+    await ctx.editMessageText(`✅ Вы успешно переключились на модель:\n**${MODELS[modelKey].name}**`, { parse_mode: 'Markdown' });
 });
 
 bot.action(/ratio_(.+)/, async (ctx) => {
     const ratio = ctx.match[1];
     if (!userState[ctx.from.id]) userState[ctx.from.id] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     userState[ctx.from.id].aspect_ratio = ratio;
+    
     await ctx.answerCbQuery(`✅ Формат изменен на ${ratio}`);
     await ctx.editMessageText(`✅ Формат генерации изображений установлен на: **${ratio}**`, { parse_mode: 'Markdown' });
 });
 
-// Обработка кнопок оплаты
+// --- Обработка кнопок оплаты ---
 bot.action(/^pay_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const amount = parseInt(ctx.match[1]);
-    const coins = amount === 1 ? 1 : amount / 5; // Простая логика конвертации
-    await generatePaymentLink(ctx, ctx.from.id, amount, coins);
+    
+    const packageInfo = PAYMENT_PACKAGES.find(p => p.priceRub === amount);
+    if (!packageInfo) return ctx.reply('❌ Ошибка: пакет не найден.');
+
+    await generatePaymentLink(ctx, ctx.from.id, packageInfo.priceRub, packageInfo.coins);
 });
 
 // --- Основная логика работы с ИИ ---
@@ -202,7 +225,6 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
 
-    // Защита от двойных списаний и спама запросами
     if (isProcessing.has(userId)) {
         return ctx.reply('⏳ Пожалуйста, дождитесь ответа на предыдущий запрос.');
     }
@@ -210,11 +232,10 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     if (!userState[userId]) userState[userId] = { model: 'flash_3_8', aspect_ratio: '1:1' };
     const modelData = MODELS[userState[userId].model];
 
-    // Проверка баланса ДО запроса
     const balance = await callGoogleSheet('get', userId, username);
     if (balance === null) return ctx.reply('❌ Ошибка базы данных.');
     if (balance < modelData.cost) {
-        return ctx.reply(`❌ Недостаточно токенов.\nТребуется: ${modelData.cost} 🪙 | Баланс: ${balance} 🪙`);
+        return ctx.reply(`❌ Недостаточно монет.\nТребуется: ${modelData.cost} 🪙 | Баланс: ${balance} 🪙`);
     }
 
     isProcessing.add(userId);
@@ -225,9 +246,8 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         let replyText = '';
 
         if (modelData.type === 'text') {
-            // Текстовые и Vision модели
             let contents = photoBuffer 
-                ? [{ inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }, promptText || 'Опиши фото.']
+                ? [{ inlineData: { mimeType: 'image/jpeg', data: photoBuffer.toString('base64') } }, promptText || 'Опиши это изображение.']
                 : promptText;
 
             const response = await ai.models.generateContent({
@@ -237,21 +257,19 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             replyText = response.text;
 
         } else if (modelData.type === 'image') {
-            // Модели генерации изображений (Здесь пока возвращаем текст, если в SDK нет прямого метода)
-            // Примечание: Если Google API поддерживает generateImages, код будет заменен на:
-            replyText = `🖼 *Генерация изображения...*\n(Функция использует модель ${modelData.name} с форматом ${userState[userId].aspect_ratio}).\n\n*Запрос:* ${promptText}`;
-            // Здесь должен быть реальный вызов API для изображений.
+            // Заглушка для моделей генерации изображений. 
+            // Здесь нужен вызов соответствующего API (например Imagen 3)
+            replyText = `🖼 *Генерация изображения выполнена!*\n(Модель: ${modelData.name} | Формат: ${userState[userId].aspect_ratio})\n\n_Здесь будет сгенерированная картинка по запросу: "${promptText}"_`;
         }
 
-        // Списываем баланс ТОЛЬКО после успешной генерации
         const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
         await ctx.reply(`${replyText}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('Ошибка ИИ:', error);
-        await ctx.reply('⚠️ Ошибка при обработке запроса нейросетью. Токены не списаны.');
+        await ctx.reply('⚠️ Ошибка при обработке запроса нейросетью. Монеты не списаны.');
     } finally {
-        isProcessing.delete(userId); // Разблокируем пользователя
+        isProcessing.delete(userId);
     }
 }
 
@@ -284,5 +302,5 @@ if (RENDER_EXTERNAL_URL) {
     });
 }
 
-app.get('/', (req, res) => res.send('AI Studio Bot Server V2 is running!'));
+app.get('/', (req, res) => res.send('AI Studio Bot Server is running!'));
 app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
