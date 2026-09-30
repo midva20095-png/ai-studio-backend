@@ -308,6 +308,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
 
+    // Ранняя блокировка гонки запросов до любых await
     if (isProcessing.has(userId)) {
         return safeReply(ctx, '⏳ Предыдущий запрос еще выполняется.');
     }
@@ -364,7 +365,6 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         } else if (modelData.type === 'image') {
             try { await ctx.sendChatAction('upload_photo'); } catch (e) {}
 
-            // Генерация картинок через единый метод generateContent (поддерживает текст и входящие фото)
             const { buffer: imgBuffer } = await generateGeminiImage({
                 modelId: modelData.modelId,
                 prompt: promptText,
