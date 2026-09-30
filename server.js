@@ -17,21 +17,22 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🤖 СПИСОК ДОСТУПНЫХ МОДЕЛЕЙ (Сюда будем добавлять новые)
+// 🤖 СПИСОК ДОСТУПНЫХ МОДЕЛЕЙ И ИХ ЛИМИТЫ
 const MODELS = {
     'gemini_38_flash': { 
         name: 'Gemini 3.8 Flash', 
         modelId: 'gemini-3.8-flash', 
-        cost: 1 
+        cost: 1,               // Стоимость 1 запроса = 1 кредит (5 руб)
+        maxInputChars: 3000,   // Лимит символов на вход
+        maxOutputTokens: 1200  // Лимит токенов на выход (~3500 символов)
     }
 };
 
-// Хранение выбранной модели для каждого пользователя (по умолчанию Gemini 3.8 Flash)
+// Хранение выбранной модели для каждого пользователя
 const userModels = {};
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Экранирование спецсимволов Markdown для защиты от ошибок Telegram
 function escapeMarkdown(text) {
     if (!text) return '';
     return String(text).replace(/[_*`\[\]()]/g, '\\$&');
@@ -54,7 +55,7 @@ async function callGoogleSheet(action, userId, username = '', amount = 0) {
 }
 
 // 2. ИНТЕГРАЦИЯ С ЮKASSA
-async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
+async function generatePaymentLink(ctx, userId, amountRub, creditsCount) {
     const url = 'https://api.yookassa.ru/v3/payments';
     const authString = Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64');
     
@@ -63,8 +64,8 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
         amount: { value: `${amountRub}.00`, currency: 'RUB' },
         confirmation: { type: 'redirect', return_url: `https://t.me/${botInfo.username}` },
         capture: true,
-        description: `Покупка ${coinsCount} токенов (${amountRub} руб)`,
-        metadata: { user_id: String(userId), coins: String(coinsCount) }
+        description: `Покупка ${creditsCount} кр. (${amountRub} руб)`,
+        metadata: { user_id: String(userId), coins: String(creditsCount) }
     };
 
     try {
@@ -82,7 +83,7 @@ async function generatePaymentLink(ctx, userId, amountRub, coinsCount) {
         return ctx.reply(
             `💳 *Ссылка на оплату создана!*\n\n` +
             `💵 Сумма: *${amountRub} руб.*\n` +
-            `🪙 Токенов к зачислению: *${coinsCount}*\n\n` +
+            `🪙 Кредитов к зачислению: *${creditsCount}*\n\n` +
             `⚠️ Оплатите по ссылке, затем нажмите кнопку «🔄 Проверить оплату»:`,
             {
                 parse_mode: 'Markdown',
@@ -126,7 +127,7 @@ bot.start(async (ctx) => {
     ctx.reply(
         `👋 Привет, ${safeUsername}!\n\n` +
         `🆔 Твой ID: \`${userId}\`\n` +
-        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
         `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*\n\n` +
         `Используй меню ниже для выбора модели или пополнения баланса:`,
         {
@@ -139,7 +140,6 @@ bot.start(async (ctx) => {
     );
 });
 
-// МЕНЮ ВЫБОРА МОДЕЛЕЙ
 bot.action('menu_models', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
@@ -151,14 +151,13 @@ bot.action('menu_models', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_gemini_38_flash')],
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 кредит = 5 руб)', 'set_model_gemini_38_flash')],
                 [Markup.button.callback('🔙 На главную', 'menu_main')]
             ])
         }
     );
 });
 
-// Установка модели Gemini 3.8 Flash
 bot.action('set_model_gemini_38_flash', async (ctx) => {
     const userId = ctx.from.id;
     userModels[userId] = 'gemini_38_flash';
@@ -173,22 +172,23 @@ bot.action('menu_buy', async (ctx) => {
 
     ctx.reply(
         `💳 *Пополнение баланса*\n\n` +
-        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n\n` +
-        `Выберите пакет токенов:`,
+        `💰 Твой текущий баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
+        `📊 Курс: *1 кредит = 5 руб.* (1 запрос = 1 кредит)\n\n` +
+        `Выберите пакет кредитов:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('💎 1 рубль (1 токен - тест)', 'pay_1')],
-                [Markup.button.callback('🪙 50 руб (10 токенов)', 'pay_50'), Markup.button.callback('🪙 100 руб (20 токенов)', 'pay_100')],
-                [Markup.button.callback('🪙 500 руб (100 токенов)', 'pay_500'), Markup.button.callback('🪙 1000 руб (200 токенов)', 'pay_1000')],
-                [Markup.button.callback('🚀 5000 руб (1000 токенов)', 'pay_5000')],
+                [Markup.button.callback('🪙 5 руб. (1 кредит)', 'pay_5')],
+                [Markup.button.callback('🪙 50 руб. (10 кредитов)', 'pay_50'), Markup.button.callback('🪙 100 руб. (20 кредитов)', 'pay_100')],
+                [Markup.button.callback('🪙 500 руб. (100 кредитов)', 'pay_500'), Markup.button.callback('🪙 1000 руб. (200 кредитов)', 'pay_1000')],
+                [Markup.button.callback('🚀 5000 руб. (1000 кредитов)', 'pay_5000')],
                 [Markup.button.callback('🔙 На главную', 'menu_main')]
             ])
         }
     );
 });
 
-bot.action('pay_1', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 1, 1); });
+bot.action('pay_5', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 5, 1); });
 bot.action('pay_50', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 50, 10); });
 bot.action('pay_100', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 100, 20); });
 bot.action('pay_500', async (ctx) => { await ctx.answerCbQuery(); await generatePaymentLink(ctx, ctx.from.id, 500, 100); });
@@ -204,7 +204,7 @@ bot.action('menu_main', async (ctx) => {
 
     ctx.reply(
         `🏠 *Главное меню*\n\n` +
-        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
+        `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* кредитов\n` +
         `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*`,
         {
             parse_mode: 'Markdown',
@@ -228,17 +228,17 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 
     if (paymentInfo.status === 'succeeded') {
-        const coins = parseInt(paymentInfo.metadata?.coins) || 1;
+        const credits = parseInt(paymentInfo.metadata?.coins) || 1;
         const amountPaid = paymentInfo.amount?.value || '';
 
-        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, coins);
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, credits);
 
         try {
             await ctx.editMessageText(
                 `✅ *Платеж успешно подтвержден!*\n` +
                 `💵 Сумма: ${amountPaid} руб.\n` +
-                `🪙 Зачислено токенов: ${coins}\n` +
-                `💰 Ваш новый баланс: *${newBalance}* 🪙`,
+                `🪙 Зачислено кредитов: ${credits}\n` +
+                `💰 Ваш новый баланс: *${newBalance}* кредитов`,
                 { parse_mode: 'Markdown' }
             );
         } catch (e) {
@@ -246,8 +246,8 @@ bot.action(/^check_(.+)$/, async (ctx) => {
         }
 
         return ctx.reply(
-            `🎉 Баланс успешно пополнен на *${coins}* токенов!\n` +
-            `💰 Текущий баланс: *${newBalance}* 🪙`,
+            `🎉 Баланс успешно пополнен на *${credits}* кредитов!\n` +
+            `💰 Текущий баланс: *${newBalance}* кредитов`,
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([[Markup.button.callback('🔙 На главную', 'menu_main')]])
@@ -261,25 +261,37 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (GEMINI AI)
+// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ С ОГРАНИЧЕНИЯМИ
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
 
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const selectedModel = MODELS[activeModelKey];
+
+    // ⛔ 1. ПРОВЕРКА ДЛИНЫ ВХОДНОГО СООБЩЕНИЯ
+    if (text.length > selectedModel.maxInputChars) {
+        return ctx.reply(
+            `⚠️ *Запрос слишком длинный!*\n\n` +
+            `Максимальный размер промпта: *${selectedModel.maxInputChars}* символов.\n` +
+            `Длина вашего сообщения: *${text.length}* символов.\n\n` +
+            `Пожалуйста, сократите текст сообщения, чтобы не тратить кредиты зря.`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    // ⛔ 2. ПРОВЕРКА БАЛАНСА ПОЛЬЗОВАТЕЛЯ
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
     if (balance === null) {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
     }
 
-    const activeModelKey = userModels[userId] || 'gemini_38_flash';
-    const selectedModel = MODELS[activeModelKey];
-
     if (balance < selectedModel.cost) {
         return ctx.reply(
-            `❌ *Недостаточно токенов!*\n\n` +
+            `❌ *Недостаточно кредитов!*\n\n` +
             `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
-            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
-            `💰 Ваш баланс: ${balance} 🪙\n\n` +
+            `📉 Требуется: ${selectedModel.cost} кредит (5 руб)\n` +
+            `💰 Ваш баланс: ${balance} кредитов\n\n` +
             `Пополните баланс в личном кабинете:`,
             {
                 parse_mode: 'Markdown',
@@ -292,15 +304,19 @@ bot.on('text', async (ctx) => {
         const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         await ctx.sendChatAction('typing');
 
+        // ⛔ 3. ЗАПРОС К GEMINI С ОГРАНИЧЕНИЕМ НА ВЫХОД (maxOutputTokens)
         const response = await ai.models.generateContent({
             model: selectedModel.modelId,
             contents: text,
+            config: {
+                maxOutputTokens: selectedModel.maxOutputTokens
+            }
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
         const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)_`, {
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} кр. | Остаток: ${newBalance} кр.)_`, {
             parse_mode: 'Markdown'
         });
     } catch (error) {
