@@ -1,3 +1,4 @@
+// --- ОСНОВНАЯ ЛОГИКА ЗАПРОСОВ К ИИ ---
 async function handleAIQuery(ctx, promptText, photoBuffer = null) {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'User';
@@ -48,10 +49,10 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
         } else if (modelData.type === 'image') {
             await ctx.sendChatAction('upload_photo');
             
-            // Формируем ввод для нового API взаимодействий (Interactions API / Nano Banana)
+            const selectedRatio = userConfig.aspect_ratio || '1:1';
             let inputPayload = [];
             
-            const fullPrompt = `${promptText}. Style requirements: ${modelData.qualityPrompt}`;
+            const fullPrompt = `${promptText}. Style requirements: ${modelData.qualityPrompt}, Aspect Ratio: ${selectedRatio}`;
             inputPayload.push({ type: 'text', text: fullPrompt });
 
             if (photoBuffer) {
@@ -62,9 +63,9 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
                 });
             }
 
-            // Вызов генерации согласно свежей документации Google AI SDK
+            // Вызов генерации через Interactions API (Nano Banana)
             const interaction = await ai.interactions.create({
-                model: modelData.modelId, // Например: 'gemini-3.1-flash-image' (Nano Banana 2)
+                model: modelData.modelId, 
                 input: inputPayload.length === 1 ? inputPayload[0].text : inputPayload
             });
 
@@ -78,7 +79,7 @@ async function handleAIQuery(ctx, promptText, photoBuffer = null) {
             }
 
             const newBalance = await callGoogleSheet('update', userId, username, -modelData.cost);
-            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
+            const caption = `🖼 **Картинка готова!**\n🤖 Модель: ${modelData.name}\n📐 Размер: ${selectedRatio}\n\n📉 _Списано: ${modelData.cost} 🪙 | Остаток: ${newBalance} 🪙_`;
             
             await safeReplyWithPhoto(ctx, imgBuffer, caption);
         }
