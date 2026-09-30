@@ -17,10 +17,17 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Настройка единственной рабочей модели (актуальный ID из ошибки Google API)
-const MODEL_ID = 'gemini-3.8-flash';
-const MODEL_NAME = 'Gemini AI';
-const REQUEST_COST = 1; // 1 запрос = 1 токен
+// 🤖 СПИСОК ДОСТУПНЫХ МОДЕЛЕЙ (Сюда будем добавлять новые)
+const MODELS = {
+    'gemini_38_flash': { 
+        name: 'Gemini 3.8 Flash', 
+        modelId: 'gemini-3.8-flash', 
+        cost: 1 
+    }
+};
+
+// Хранение выбранной модели для каждого пользователя (по умолчанию Gemini 3.8 Flash)
+const userModels = {};
 
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -113,20 +120,50 @@ bot.start(async (ctx) => {
     const safeUsername = escapeMarkdown(username);
     
     const balance = await callGoogleSheet('get', userId, username);
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModel = MODELS[activeModelKey];
 
     ctx.reply(
         `👋 Привет, ${safeUsername}!\n\n` +
         `🆔 Твой ID: \`${userId}\`\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${MODEL_NAME}*\n\n` +
-        `Просто отправь мне текст сообщения:`,
+        `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*\n\n` +
+        `Используй меню ниже для выбора модели или пополнения баланса:`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
+                [Markup.button.callback('🤖 Выбор модели', 'menu_models')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
     );
+});
+
+// МЕНЮ ВЫБОРА МОДЕЛЕЙ
+bot.action('menu_models', async (ctx) => {
+    await ctx.answerCbQuery();
+    const userId = ctx.from.id;
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+
+    ctx.reply(
+        `🤖 *Выберите языковую модель:*\n\n` +
+        `Текущая модель: *${escapeMarkdown(MODELS[activeModelKey].name)}*`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('⚡ Gemini 3.8 Flash (1 токен)', 'set_model_gemini_38_flash')],
+                [Markup.button.callback('🔙 На главную', 'menu_main')]
+            ])
+        }
+    );
+});
+
+// Установка модели Gemini 3.8 Flash
+bot.action('set_model_gemini_38_flash', async (ctx) => {
+    const userId = ctx.from.id;
+    userModels[userId] = 'gemini_38_flash';
+    await ctx.answerCbQuery('Выбрана модель Gemini 3.8 Flash');
+    ctx.reply('✅ Активна модель: *Gemini 3.8 Flash*', { parse_mode: 'Markdown' });
 });
 
 bot.action('menu_buy', async (ctx) => {
@@ -162,14 +199,17 @@ bot.action('menu_main', async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from.id;
     const balance = await callGoogleSheet('get', userId, ctx.from.username);
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const activeModel = MODELS[activeModelKey];
 
     ctx.reply(
         `🏠 *Главное меню*\n\n` +
         `💰 Баланс: *${balance !== null ? balance : 'ошибка'}* 🪙\n` +
-        `🤖 Модель: *${MODEL_NAME}*`,
+        `🤖 Выбранная модель: *${escapeMarkdown(activeModel.name)}*`,
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
+                [Markup.button.callback('🤖 Выбор модели', 'menu_models')],
                 [Markup.button.callback('💳 Личный кабинет / Пополнить', 'menu_buy')]
             ])
         }
@@ -221,7 +261,7 @@ bot.action(/^check_(.+)$/, async (ctx) => {
     }
 });
 
-// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (GEMINI)
+// 4. ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (GEMINI AI)
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -231,10 +271,14 @@ bot.on('text', async (ctx) => {
         return ctx.reply('❌ Ошибка связи с базой данных (Google Таблица). Попробуйте позже.');
     }
 
-    if (balance < REQUEST_COST) {
+    const activeModelKey = userModels[userId] || 'gemini_38_flash';
+    const selectedModel = MODELS[activeModelKey];
+
+    if (balance < selectedModel.cost) {
         return ctx.reply(
             `❌ *Недостаточно токенов!*\n\n` +
-            `📉 Требуется: ${REQUEST_COST} 🪙\n` +
+            `🤖 Модель: ${escapeMarkdown(selectedModel.name)}\n` +
+            `📉 Требуется: ${selectedModel.cost} 🪙\n` +
             `💰 Ваш баланс: ${balance} 🪙\n\n` +
             `Пополните баланс в личном кабинете:`,
             {
@@ -249,14 +293,14 @@ bot.on('text', async (ctx) => {
         await ctx.sendChatAction('typing');
 
         const response = await ai.models.generateContent({
-            model: MODEL_ID,
+            model: selectedModel.modelId,
             contents: text,
         });
 
         const aiReply = response.text || 'Не удалось получить ответ от нейросети.';
-        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -REQUEST_COST);
+        const newBalance = await callGoogleSheet('update', userId, ctx.from.username, -selectedModel.cost);
 
-        ctx.reply(`${aiReply}\n\n_(${MODEL_NAME} | Списано: ${REQUEST_COST} 🪙 | Остаток: ${newBalance} 🪙)_`, {
+        ctx.reply(`${aiReply}\n\n_(${escapeMarkdown(selectedModel.name)} | Списано: ${selectedModel.cost} 🪙 | Остаток: ${newBalance} 🪙)_`, {
             parse_mode: 'Markdown'
         });
     } catch (error) {
