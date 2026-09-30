@@ -17,8 +17,8 @@ const YUKASSA_SECRET_KEY = 'live_WNdPjKP4AHR-9eun-no0nkpCSzXxxC9_nomQanO-wIk';
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz__C7Y8ybJm2bOi85TN0KLeBXRHxoIdYyH-aKun_Wss6JWYaGzZlRw5HWQksFbP0TK/exec';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Настройка единственной модели
-const MODEL_ID = 'gemini-2.5-flash';
+// Настройка единственной рабочей модели (актуальный ID из ошибки Google API)
+const MODEL_ID = 'gemini-3.8-flash';
 const MODEL_NAME = 'Gemini AI';
 const REQUEST_COST = 1; // 1 запрос = 1 токен
 
